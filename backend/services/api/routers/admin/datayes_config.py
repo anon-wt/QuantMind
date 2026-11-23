@@ -1,4 +1,4 @@
-"""Datayes 数据商城 Token 配置；本阶段仅保存凭据，不调用取数接口。"""
+"""Datayes 数据商城 Token 配置：持久化凭据并脱敏返回。"""
 
 from datetime import datetime, timezone
 

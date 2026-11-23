@@ -107,6 +107,28 @@ export interface DatayesConfig {
     timestamp: string;
 }
 
+export type AShareSource = 'quantdb' | 'datayes';
+export interface AShareInitCatalog {
+    providers: Array<{ source: AShareSource; label: string; enabled: boolean; configured: boolean; root: string; dataset_count: number; local_dataset_count: number }>;
+    datasets: Array<{ dataset: string; name: string; group: string; sources: AShareSource[]; datayes_note: string }>;
+    timestamp: string;
+}
+export interface AShareInitJob {
+    job_id: string;
+    sources: AShareSource[];
+    status: 'running' | 'cancelling' | 'completed' | 'partial' | 'failed' | 'cancelled';
+    done: number;
+    total: number;
+    source?: AShareSource;
+    current?: string | null;
+    error?: string;
+    detail?: { dataset?: string; done?: number; total?: number; rows?: number };
+    results: Array<{
+        source: AShareSource; root?: string; errors?: number; error?: string;
+        datasets?: Array<{ dataset: string; status: string; rows: number; error?: string }> | Record<string, { downloaded?: number; skipped?: number; errors?: number }>;
+    }>;
+}
+
 export interface QuantDBInfo {
     installed: boolean;
     api_key_configured: boolean;
@@ -658,6 +680,26 @@ class DataPlatformService {
     async getDatayesConfig(): Promise<DatayesConfig> {
         const resp = await this.axiosInstance.get('/admin/data-platform/datayes/config');
         return this.unwrap(resp);
+    }
+
+    async getAShareInitCatalog(): Promise<AShareInitCatalog> {
+        return this.unwrap(await this.axiosInstance.get('/admin/data-platform/a-share/initialization'));
+    }
+
+    async startAShareInitialization(payload: { sources: AShareSource[]; datasets: string[]; start_date: string; end_date: string }): Promise<{ job: AShareInitJob }> {
+        return this.unwrap(await this.axiosInstance.post('/admin/data-platform/a-share/initialization/jobs', payload));
+    }
+
+    async listAShareInitializationJobs(): Promise<{ jobs: AShareInitJob[] }> {
+        return this.unwrap(await this.axiosInstance.get('/admin/data-platform/a-share/initialization/jobs'));
+    }
+
+    async getAShareInitializationJob(id: string): Promise<{ job: AShareInitJob }> {
+        return this.unwrap(await this.axiosInstance.get(`/admin/data-platform/a-share/initialization/jobs/${encodeURIComponent(id)}`));
+    }
+
+    async cancelAShareInitialization(id: string): Promise<{ job: AShareInitJob }> {
+        return this.unwrap(await this.axiosInstance.post(`/admin/data-platform/a-share/initialization/jobs/${encodeURIComponent(id)}/cancel`));
     }
 
     async saveDatayesConfig(token: string): Promise<DatayesConfig> {

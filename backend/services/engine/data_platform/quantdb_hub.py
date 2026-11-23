@@ -85,6 +85,21 @@ def _dir_has_data(p: Path) -> bool:
         return False
 
 
+def _selected_a_source() -> str:
+    from backend.shared.data_source_config import get_enabled_sources
+
+    sources = get_enabled_sources("A")
+    return "datayes" if sources.get("datayes") and not sources.get("quantdb", True) else "quantdb"
+
+
+def _resolve_read_data_dir() -> Path:
+    if _selected_a_source() == "datayes":
+        from .datayes_sync import data_root
+
+        return data_root()
+    return _resolve_data_dir()
+
+
 # ---------------------------------------------------------------------------
 # 列名映射：QuantDB parquet → QuantMind 规范
 # ---------------------------------------------------------------------------
@@ -150,10 +165,11 @@ class QuantDBDataHub:
     def __init__(self, data_dir: str | Path | None = None) -> None:
         # 显式传入目录（如 QuantUS/HK/Futures 子类）时不做自动重解析，尊重调用方
         self._explicit_dir = data_dir is not None
+        self._read_source = _selected_a_source() if not self._explicit_dir else ""
         if data_dir is not None:
             self._data_dir = Path(data_dir)
         else:
-            self._data_dir = _resolve_data_dir()
+            self._data_dir = _resolve_read_data_dir()
         self._local = threading.local()
         self._views_mounted_per_conn: set[int] = set()  # track which conn ids have views mounted
         self._dir_lock = threading.Lock()
@@ -170,17 +186,20 @@ class QuantDBDataHub:
 
     @property
     def data_dir(self) -> Path:
-        """当前数据目录（自动重解析）。
+        """当前 A 股读取目录（随 QuantDB / Datayes 选择自动重解析）。
 
-        非显式指定目录、且缓存目录当前无数据时（典型场景：单例创建于
+        非显式指定目录、且数据源选择变化或缓存目录当前无数据时（典型场景：单例创建于
         「初始化数据」完成之前，_resolve_data_dir 跳过空目录 fallback 到了
         错误路径），重新走 _resolve_data_dir()。数据补齐后长驻进程（api/
         engine/stream/celery 各进程单例）无需重启即可读到。
         """
-        if not self._explicit_dir and not _dir_has_data(self._data_dir):
+        if not self._explicit_dir and (
+            _selected_a_source() != self._read_source or not _dir_has_data(self._data_dir)
+        ):
             with self._dir_lock:
-                if not self._explicit_dir and not _dir_has_data(self._data_dir):
-                    new_dir = _resolve_data_dir()
+                if not self._explicit_dir:
+                    new_dir = _resolve_read_data_dir()
+                    self._read_source = _selected_a_source()
                     if new_dir != self._data_dir:
                         self._data_dir = new_dir
                         self._dir_generation += 1

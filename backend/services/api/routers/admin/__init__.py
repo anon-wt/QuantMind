@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from .dashboard import router as dashboard_router
 from .data_platform import router as data_platform_router
 from .datayes_config import router as datayes_config_router
+from .a_share_initialization import router as a_share_initialization_router
 from .quantdb_console import router as quantdb_console_router
 from .quantus_console import router as quantus_console_router
 from .quanthk_console import router as quanthk_console_router
@@ -55,6 +56,9 @@ admin_router.include_router(
 )
 admin_router.include_router(
     datayes_config_router, prefix="/data-platform/datayes", tags=["Admin-Datayes"]
+)
+admin_router.include_router(
+    a_share_initialization_router, prefix="/data-platform/a-share", tags=["Admin-AShare"]
 )
 admin_router.include_router(
     quantdb_console_router, prefix="/data-platform/quantdb", tags=["Admin-QuantDB"]

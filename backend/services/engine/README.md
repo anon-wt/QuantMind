@@ -274,10 +274,11 @@ python -m celery -A backend.services.engine.qlib_app.celery_config:celery_app fl
 
 ### A 股 Datayes 配置
 
-- 入口：管理后台 → 数据平台 → A 股 → 同步设置，数据源列表中可勾选「Datayes 通联数据」，默认关闭；选择通过现有 `/api/v1/admin/data-platform/quantdb/data-sources` 接口保存。
+- 入口：管理后台 → 数据平台 → A 股 → 引导初始化。数据源配置只展示 QuantDB / Datayes，支持单选任一源或同时启用，Datayes 默认关闭；选择通过现有 `/api/v1/admin/data-platform/quantdb/data-sources` 接口保存。
 - Datayes 数据商城（`https://mall.datayes.com/`）Token 通过管理员专用 `GET/POST /api/v1/admin/data-platform/datayes/config` 查询状态或保存；POST 请求体为 `{"token": "..."}`。
 - Token 写入共享的 `config/runtime.env`，键名为 `DATAYES_TOKEN`，读取走 `backend.shared.runtime_secrets.get_secret`。该文件已被 Git 忽略，接口仅返回 `token_configured` 和 `token_masked` 等状态，不返回明文。
-- 当前阶段仅提供数据源选择及 Token 配置。保存 Token 不验证连接、不自动启用数据源；勾选 Datayes 尚不触发取数，不改变现有 QuantDB 同步与定时调度。
+- Token 输入入口在个人中心 → 数据平台，与 QuantDB 配置并列。保存 Token 不自动启用数据源或触发同步。
+- 在引导页「本地落盘」点击「初始化数据」，选择数据集和 Datayes 日期范围后启动后台任务。QuantDB 保留 ModelScope 全量初始化；Datayes 对齐 22 个可映射数据集，提供原子合并、每数据集结果、任务恢复查看及协作取消。详见 [Datayes 初始化说明](data_platform/DATAYES.md)。
 
 ### 1. 消费队列的 Celery Worker 必须唯一
 

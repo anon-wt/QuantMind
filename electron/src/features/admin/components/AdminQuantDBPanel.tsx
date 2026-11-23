@@ -12,15 +12,13 @@ import {
 } from '@ant-design/icons';
 import {
     dataPlatformService, QuantDBDataset, QuantDBLocalScanJob,
-    QuantDBLocalScanPreflight, QuantDBModelScopeInitJob,
-    QuantDBModelScopePreflight,
+    QuantDBLocalScanPreflight,
 } from '../services/dataPlatformService';
 import { QuantDBCatalogPanel } from './quantdb/QuantDBCatalogPanel';
 import { QuantDBPreviewDrawer } from './quantdb/QuantDBPreviewDrawer';
 import { describeError, httpStatusOf } from './quantdb/utils';
 import { SyncSchedulePanel } from './data-management/SyncSchedulePanel';
-import { MarketDataSources } from './data-management/MarketDataSources';
-import { DatayesConfigPanel } from './data-management/DatayesConfigPanel';
+import { AShareInitialization } from './data-management/AShareInitialization';
 import { SectionCard } from './data-management/SectionCard';
 
 const { Text } = Typography;
@@ -66,7 +64,6 @@ export const AdminQuantDBPanel: React.FC = () => {
         setCatalogRefreshSignal(refreshCounter.current);
     }, []);
     const [scanOpen, setScanOpen] = useState(false);
-    const [initOpen, setInitOpen] = useState(false);
 
     const loadInfo = useCallback(async () => {
         setLoading(true);
@@ -101,42 +98,7 @@ export const AdminQuantDBPanel: React.FC = () => {
 
     return (
         <div className="space-y-5">
-            {/* ① 数据初始化 — 首次全量落盘的两个动作 */}
-            <SectionCard
-                index="01"
-                title="数据初始化"
-                desc="首次全量落盘 · 后台执行可断点续传"
-                icon={<CloudDownloadOutlined />}
-                tone="indigo"
-            >
-                <div className="flex flex-wrap items-center gap-3 bg-white rounded-2xl border border-slate-100 p-3">
-                    <Button
-                        type="primary"
-                        size="large"
-                        icon={<CloudDownloadOutlined />}
-                        onClick={() => setInitOpen(true)}
-                        className="rounded-xl font-black shadow-sm"
-                        style={{ height: 44, padding: '0 22px', fontSize: 14 }}
-                    >
-                        初始化数据
-                    </Button>
-                    <Button
-                        size="large"
-                        icon={<FileSearchOutlined />}
-                        onClick={() => setScanOpen(true)}
-                        className="rounded-xl font-bold border-slate-200 bg-white"
-                        style={{ height: 44, padding: '0 22px', fontSize: 14 }}
-                    >
-                        本地扫描
-                    </Button>
-                    <span className="text-xs text-slate-400 leading-relaxed">
-                        免流量拉取 78GB 全量（ModelScope 断点续传）或扫描已有离线包建增量
-                    </span>
-                </div>
-                <div className="text-[11px] text-slate-400 mt-2 px-1">
-                    已有网盘/归档包建议先 <b className="text-slate-600">本地扫描</b> 再走增量；无本地数据直接 <b className="text-slate-600">初始化数据</b>。完成后到「数据更新」检查差异并同步增量。
-                </div>
-            </SectionCard>
+            <AShareInitialization onScan={() => setScanOpen(true)} onInitialized={bumpCatalogRefresh} />
 
             {/* ② 数据更新 — QuantDB 状态/流量 + 注册入口 + 检查更新与增量同步 */}
             <SectionCard
@@ -253,14 +215,12 @@ export const AdminQuantDBPanel: React.FC = () => {
             <SectionCard
                 index="03"
                 title="同步设置"
-                desc="数据源选择与定时同步"
+                desc="定时同步"
                 icon={<SettingOutlined />}
                 tone="amber"
                 extra={<Tag className="m-0 rounded-full bg-slate-50 border-slate-200 text-slate-500 text-[11px] font-bold">A 股专用</Tag>}
             >
                 <div className="space-y-4">
-                    <MarketDataSources market="quantdb" marketLabel="A 股" />
-                    <DatayesConfigPanel />
                     <SyncSchedulePanel market="A" defaultDays={5} />
                 </div>
             </SectionCard>
@@ -279,12 +239,6 @@ export const AdminQuantDBPanel: React.FC = () => {
                 onCompleted={bumpCatalogRefresh}
             />
 
-            {/* 初始化数据：魔搭 ModelScope → 覆盖本地数据目录 */}
-            <ModelScopeInitModal
-                open={initOpen}
-                onClose={() => setInitOpen(false)}
-                onCompleted={bumpCatalogRefresh}
-            />
         </div>
     );
 };
@@ -564,351 +518,3 @@ export const LocalScanModal: React.FC<LocalScanModalProps> = ({ open, onClose, o
         </Modal>
     );
 };
-
-// ---------------------------------------------------------------------------
-// 初始化数据弹窗：魔搭预检 → 选择数据集/模式 → 后台拉取 → 进度/结果
-// ---------------------------------------------------------------------------
-const INIT_JOB_POLL_INTERVAL_MS = 2000;
-
-interface ModelScopeInitModalProps {
-    open: boolean;
-    onClose: () => void;
-    onCompleted: () => void;
-}
-
-export const ModelScopeInitModal: React.FC<ModelScopeInitModalProps> = ({ open, onClose, onCompleted }) => {
-    const [preflight, setPreflight] = useState<QuantDBModelScopePreflight | null>(null);
-    const [preflightLoading, setPreflightLoading] = useState(false);
-    const [selected, setSelected] = useState<string[]>([]);
-    const [job, setJob] = useState<QuantDBModelScopeInitJob | null>(null);
-    const [starting, setStarting] = useState(false);
-    const [cancelling, setCancelling] = useState(false);
-
-    const loadPreflight = useCallback(async () => {
-        setPreflightLoading(true);
-        try {
-            const data = await dataPlatformService.modelscopePreflight();
-            setPreflight(data);
-            setSelected(data.datasets.map((d) => d.dataset));
-        } catch (error: unknown) {
-            message.error(`预检失败: ${describeError(error)}`);
-        } finally {
-            setPreflightLoading(false);
-        }
-    }, []);
-
-    // 打开弹窗时：若后台已有运行中的任务，直接回到下载进度页；否则做预检
-    useEffect(() => {
-        if (!open) return undefined;
-        let alive = true;
-        (async () => {
-            try {
-                const resp = await dataPlatformService.listModelScopeInitJobs();
-                const active = resp.jobs
-                    .filter((j) => j.status === 'running')
-                    .sort((a, b) => (a.started_at < b.started_at ? 1 : -1))[0];
-                if (!alive) return;
-                if (active) {
-                    setJob(active);
-                    return;
-                }
-            } catch {
-                // 忽略：回退到正常预检
-            }
-            if (!alive) return;
-            setJob(null);
-            loadPreflight();
-        })();
-        return () => {
-            alive = false;
-        };
-    }, [open, loadPreflight]);
-
-    // 轮询初始化任务进度；结束后回到预检（可再次发起）并刷新目录统计
-    useEffect(() => {
-        if (!job || job.status !== 'running') return undefined;
-        const timer = setInterval(async () => {
-            try {
-                const resp = await dataPlatformService.getModelScopeInitJob(job.job_id);
-                setJob(resp.job);
-                if (resp.job.status === 'completed') {
-                    const s = resp.job.summary;
-                    message.success(`初始化完成：下载 ${s?.downloaded ?? 0}，跳过 ${s?.skipped ?? 0}，失败 ${s?.errors ?? 0}`);
-                    onCompleted();
-                    loadPreflight();
-                } else if (resp.job.status === 'failed') {
-                    message.error(`初始化失败: ${resp.job.error ?? '未知错误'}`);
-                    loadPreflight();
-                } else if (resp.job.status === 'cancelled') {
-                    message.warning('初始化已取消');
-                    loadPreflight();
-                }
-            } catch (error: unknown) {
-                if (httpStatusOf(error) === 404) {
-                    // 任务记录已不存在（服务重启/被清理）→ 停止轮询，回到预检
-                    setJob(null);
-                    loadPreflight();
-                    message.warning('后台任务记录已失效（服务可能重启过）。已下载的文件会保留，可再次发起续传。');
-                    return;
-                }
-                // 单次轮询失败忽略，下一轮重试
-            }
-        }, INIT_JOB_POLL_INTERVAL_MS);
-        return () => clearInterval(timer);
-    }, [job, onCompleted, loadPreflight]);
-
-    const doStart = async () => {
-        setStarting(true);
-        try {
-            const all = preflight?.datasets.map((d) => d.dataset) ?? [];
-            const resp = await dataPlatformService.startModelScopeInit({
-                datasets: selected.length === all.length ? undefined : selected,
-            });
-            setJob(resp.job);
-            message.success('初始化数据已启动（后台执行）');
-        } catch (error: unknown) {
-            message.error(`启动失败: ${describeError(error)}`);
-        } finally {
-            setStarting(false);
-        }
-    };
-
-    const handleCancelJob = async () => {
-        if (!job) return;
-        setCancelling(true);
-        try {
-            await dataPlatformService.cancelModelScopeInitJob(job.job_id);
-        } catch (error: unknown) {
-            message.error(`取消失败: ${describeError(error)}`);
-        } finally {
-            setCancelling(false);
-        }
-    };
-
-    const isRunning = job?.status === 'running';
-    const percent = job && job.bytes_total > 0
-        ? Math.min(100, Math.round((job.bytes_done / job.bytes_total) * 100))
-        : job && job.total > 0 ? Math.round((job.done / job.total) * 100) : 0;
-    const repoUrl = preflight?.repo_url
-        ?? `https://www.modelscope.cn/datasets/${preflight?.repo_id ?? 'qusong0627/LightGBM_Alpha300'}`;
-
-    const columns: ColumnsType<QuantDBModelScopePreflight['datasets'][number]> = [
-        { title: '数据集', dataIndex: 'name', width: 130 },
-        {
-            title: '标识',
-            dataIndex: 'dataset',
-            width: 160,
-            render: (v: string) => <Text code className="text-xs">{v}</Text>,
-        },
-        {
-            title: '落盘形态',
-            dataIndex: 'layout',
-            width: 90,
-            render: (v: string) => <Tag>{v}</Tag>,
-        },
-        { title: '远端目录', dataIndex: 'rel_dir', ellipsis: true },
-        { title: '文件数', dataIndex: 'files', width: 90, align: 'right', render: (v: number) => v.toLocaleString() },
-        { title: '大小', dataIndex: 'bytes', width: 90, align: 'right', render: (v: number) => formatBytes(v) },
-    ];
-
-    return (
-        <Modal
-            title="初始化数据 — 从魔搭覆盖本地 QuantDB 数据目录"
-            open={open}
-            onCancel={onClose}
-            width={880}
-            centered
-            destroyOnHidden
-            style={{ paddingBottom: 120 }}
-            styles={{
-                body: {
-                    maxHeight: 'calc(var(--app-h) - 280px)',
-                    overflowY: 'auto',
-                    paddingBottom: 16,
-                },
-            }}
-            footer={
-                <Space>
-                    {isRunning && (
-                        <Button danger icon={<StopOutlined />} loading={cancelling} onClick={handleCancelJob}>
-                            取消
-                        </Button>
-                    )}
-                    <Button
-                        type="primary"
-                        icon={<CloudDownloadOutlined />}
-                        loading={starting}
-                        disabled={isRunning || selected.length === 0 || preflightLoading}
-                        onClick={doStart}
-                    >
-                        开始拉取
-                    </Button>
-                    <Button onClick={onClose}>关闭</Button>
-                </Space>
-            }
-        >
-            <Space direction="vertical" className="w-full" size="middle">
-                <Alert
-                    type="info"
-                    showIcon
-                    message={
-                        <span>
-                            从魔搭公开数据集仓库拉取 QuantDB A股数据并覆盖本地数据目录（免 QuantDB API Key / 流量）。逐文件校验 sha256 后原地覆盖；已完整下载的文件自动跳过，支持断点续传。仓库：
-                            <a href={repoUrl} target="_blank" rel="noreferrer">{repoUrl}</a>
-                        </span>
-                    }
-                />
-
-                <Alert
-                    type="warning"
-                    showIcon
-                    message="数据每周末更新，如需更新请重新点击初始化"
-                    description="数据总量约 78GB，首次全量同步约需 1-3 小时，请耐心等待，您可稍后回来查看。下载在后台执行，启动后可以关闭本窗口或离开页面；已完整下载的文件会自动跳过，中断后重新发起可断点续传。"
-                />
-
-                {preflight?.warnings.map((w, i) => (
-                    <Alert key={i} type="warning" showIcon message={w} />
-                ))}
-
-                {preflight && (
-                    <Row gutter={12}>
-                        <Col flex="1">
-                            <Statistic title="远端文件" value={preflight.total_files} valueStyle={{ fontSize: 18 }} />
-                        </Col>
-                        <Col flex="1">
-                            <Statistic title="远端总量" value={formatBytes(preflight.total_bytes)} valueStyle={{ fontSize: 18 }} />
-                        </Col>
-                        <Col flex="1">
-                            <Statistic
-                                title="已就绪(将跳过)"
-                                value={formatBytes(preflight.skip_bytes)}
-                                valueStyle={{ fontSize: 18, color: '#52c41a' }}
-                            />
-                        </Col>
-                        <Col flex="1">
-                            <Statistic
-                                title="将原地覆盖"
-                                value={formatBytes(preflight.changed_bytes)}
-                                valueStyle={{ fontSize: 18, color: '#fa8c16' }}
-                            />
-                        </Col>
-                        <Col flex="1">
-                            <Statistic
-                                title="需新增空间"
-                                value={formatBytes(preflight.missing_bytes)}
-                                valueStyle={{ fontSize: 18, color: preflight.missing_bytes > 0 ? '#1677ff' : '#52c41a' }}
-                            />
-                        </Col>
-                        <Col flex="1">
-                            <Statistic title="目录可用" value={formatBytes(preflight.disk.free)} valueStyle={{ fontSize: 18 }} />
-                        </Col>
-                    </Row>
-                )}
-
-                {preflight && (
-                    <div className="text-[11px] text-slate-400 leading-5">
-                        <Text type="secondary" className="text-[11px]">
-                            已就绪 = 大小与 sha256 一致（跳过 {preflight.skip_files.toLocaleString()} 个文件）；
-                            将原地覆盖 = 本地已有旧版本，替换不占净增空间；需新增空间 = 本地缺失。
-                        </Text>
-                    </div>
-                )}
-
-                {preflight && (
-                    <div className="text-xs text-slate-400 break-all">
-                        目标目录：<Text code>{preflight.root}</Text>（
-                        <Text code>QM_QUANTDB_DATA_DIR</Text>）· 共 {preflight.datasets.length} 个数据集
-                    </div>
-                )}
-
-                {/* 数据集选择 */}
-                {!isRunning && (
-                    <Table
-                        size="small"
-                        loading={preflightLoading}
-                        rowKey="dataset"
-                        dataSource={preflight?.datasets ?? []}
-                        columns={columns}
-                        pagination={false}
-                        scroll={{ y: 260 }}
-                        rowSelection={{
-                            selectedRowKeys: selected,
-                            onChange: (keys) => setSelected(keys as string[]),
-                        }}
-                    />
-                )}
-
-                {/* 拉取进度 / 结果 */}
-                {job && (
-                    <div className="p-3 bg-gray-50 rounded space-y-2">
-                        <Space wrap>
-                            <Text strong>{job.job_id}</Text>
-                            <Tag
-                                color={
-                                    job.status === 'completed' ? 'green'
-                                        : job.status === 'failed' ? 'red'
-                                            : job.status === 'cancelled' || job.status === 'cancelling' ? 'orange'
-                                                : 'blue'
-                                }
-                            >
-                                {job.status === 'running' ? '进行中' : job.status === 'completed' ? '已完成'
-                                    : job.status === 'failed' ? '失败' : '已取消'}
-                            </Tag>
-                            <Tag>{job.stage}</Tag>
-                            {job.current && <Text type="secondary" className="text-xs">{job.current}</Text>}
-                        </Space>
-                        <Progress percent={percent} status={job.status === 'failed' ? 'exception' : 'active'} />
-                        <Text type="secondary" className="text-xs">
-                            {(job.bytes_done / 1024 / 1024).toFixed(1)} MB / {(job.bytes_total / 1024 / 1024).toFixed(1)} MB
-                            （数据集 {job.done}/{job.total}）
-                        </Text>
-                        {job.status === 'running' && (
-                            <Text type="secondary" className="text-xs">
-                                首次全量约需 1-3 小时，可关闭本窗口或离开页面，稍后回来查看进度。
-                            </Text>
-                        )}
-                        {job.status === 'completed' && job.summary && (
-                            <>
-                                <Space wrap>
-                                    <Tag color="green">下载 {job.summary.downloaded.toLocaleString()}</Tag>
-                                    <Tag>跳过 {job.summary.skipped.toLocaleString()}</Tag>
-                                    <Tag color={job.summary.errors ? 'red' : 'default'}>
-                                        失败 {job.summary.errors}
-                                    </Tag>
-                                    <Tag>{formatBytes(job.summary.downloaded_bytes)}</Tag>
-                                    <Tag>耗时 {job.summary.elapsed_sec}s</Tag>
-                                </Space>
-                                {job.summary.state?.state_dbs && (
-                                    <div className="text-xs text-slate-400 mt-1 break-all">
-                                        {Object.entries(job.summary.state.state_dbs).map(([k, v]) => (
-                                            <div key={k}>{k}: <Text code>{v}</Text></div>
-                                        ))}
-                                    </div>
-                                )}
-                                {(job.summary.error_samples?.length ?? 0) > 0 && (
-                                    <Alert
-                                        type="warning"
-                                        showIcon
-                                        message={`部分文件失败（示例）`}
-                                        description={
-                                            <div className="text-xs">
-                                                {job.summary.error_samples.slice(0, 5).map((s, i) => (
-                                                    <div key={i}>{s}</div>
-                                                ))}
-                                            </div>
-                                        }
-                                    />
-                                )}
-                            </>
-                        )}
-                        {job.status === 'failed' && (
-                            <Alert type="error" showIcon message={job.error ?? '未知错误'} />
-                        )}
-                    </div>
-                )}
-            </Space>
-        </Modal>
-    );
-};
-
-export default AdminQuantDBPanel;

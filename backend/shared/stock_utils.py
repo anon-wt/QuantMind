@@ -23,6 +23,24 @@ class StockCodeUtil:
         return StockCodeUtil.to_suffix(code)
 
     @staticmethod
+    def from_datayes(code: str, exchange: str = "") -> str:
+        """通联证券编码/交易所代码在数据源边界转换为统一后缀。"""
+        value = str(code or "").strip().upper()
+        match = re.fullmatch(r"(\d{1,6})(?:\.([A-Z]+))?", value)
+        if not match:
+            return ""
+        digits, suffix = match.groups()
+        market = {
+            "XSHG": "SH", "XSHE": "SZ", "XBEI": "BJ",
+            "SH": "SH", "SZ": "SZ", "BJ": "BJ",
+        }.get(str(exchange or suffix or "").upper())
+        if market:
+            return StockCodeUtil.normalize(f"{digits.zfill(6)}.{market}")
+        if suffix:
+            return ""  # 发行机构编码（如 ZICN）不等价于交易所，禁止猜测。
+        return StockCodeUtil.normalize(digits.zfill(6))
+
+    @staticmethod
     def to_suffix(code: str) -> str:
         """转换为 suffix 格式 600036.SH（QuantDB parquet / Qlib / 行情层口径）。
 
