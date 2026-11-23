@@ -101,6 +101,12 @@ export interface QuantDBConfig {
     timestamp: string;
 }
 
+export interface DatayesConfig {
+    token_configured: boolean;
+    token_masked: string;
+    timestamp: string;
+}
+
 export interface QuantDBInfo {
     installed: boolean;
     api_key_configured: boolean;
@@ -646,6 +652,16 @@ class DataPlatformService {
         timestamp: string;
     }> {
         const resp = await this.axiosInstance.post('/admin/data-platform/quantdb/query-manifest', payload);
+        return this.unwrap(resp);
+    }
+
+    async getDatayesConfig(): Promise<DatayesConfig> {
+        const resp = await this.axiosInstance.get('/admin/data-platform/datayes/config');
+        return this.unwrap(resp);
+    }
+
+    async saveDatayesConfig(token: string): Promise<DatayesConfig> {
+        const resp = await this.axiosInstance.post('/admin/data-platform/datayes/config', { token });
         return this.unwrap(resp);
     }
 

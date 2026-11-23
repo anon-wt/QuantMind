@@ -19,6 +19,8 @@ import { QuantDBCatalogPanel } from './quantdb/QuantDBCatalogPanel';
 import { QuantDBPreviewDrawer } from './quantdb/QuantDBPreviewDrawer';
 import { describeError, httpStatusOf } from './quantdb/utils';
 import { SyncSchedulePanel } from './data-management/SyncSchedulePanel';
+import { MarketDataSources } from './data-management/MarketDataSources';
+import { DatayesConfigPanel } from './data-management/DatayesConfigPanel';
 import { SectionCard } from './data-management/SectionCard';
 
 const { Text } = Typography;
@@ -251,12 +253,14 @@ export const AdminQuantDBPanel: React.FC = () => {
             <SectionCard
                 index="03"
                 title="同步设置"
-                desc="定时同步"
+                desc="数据源选择与定时同步"
                 icon={<SettingOutlined />}
                 tone="amber"
                 extra={<Tag className="m-0 rounded-full bg-slate-50 border-slate-200 text-slate-500 text-[11px] font-bold">A 股专用</Tag>}
             >
                 <div className="space-y-4">
+                    <MarketDataSources market="quantdb" marketLabel="A 股" />
+                    <DatayesConfigPanel />
                     <SyncSchedulePanel market="A" defaultDays={5} />
                 </div>
             </SectionCard>

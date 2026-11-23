@@ -272,6 +272,13 @@ python -m celery -A backend.services.engine.qlib_app.celery_config:celery_app fl
 
 ## 🗓️ 定时调度与市场数据同步（2026-09-10）
 
+### A 股 Datayes 配置
+
+- 入口：管理后台 → 数据平台 → A 股 → 同步设置，数据源列表中可勾选「Datayes 通联数据」，默认关闭；选择通过现有 `/api/v1/admin/data-platform/quantdb/data-sources` 接口保存。
+- Datayes 数据商城（`https://mall.datayes.com/`）Token 通过管理员专用 `GET/POST /api/v1/admin/data-platform/datayes/config` 查询状态或保存；POST 请求体为 `{"token": "..."}`。
+- Token 写入共享的 `config/runtime.env`，键名为 `DATAYES_TOKEN`，读取走 `backend.shared.runtime_secrets.get_secret`。该文件已被 Git 忽略，接口仅返回 `token_configured` 和 `token_masked` 等状态，不返回明文。
+- 当前阶段仅提供数据源选择及 Token 配置。保存 Token 不验证连接、不自动启用数据源；勾选 Datayes 尚不触发取数，不改变现有 QuantDB 同步与定时调度。
+
 ### 1. 消费队列的 Celery Worker 必须唯一
 
 - `backend/main_oss.py` 在 `SERVICE_MODE=all` 下**不再默认启动内嵌 Celery worker**，只有 `celery-worker` 容器消费队列。
