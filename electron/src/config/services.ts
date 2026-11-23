@@ -69,7 +69,10 @@ function persistServerUrl(url: string | null): void {
  * 检测是否为 Electron 桌面环境
  */
 export function isElectronEnv(): boolean {
-  return typeof window !== 'undefined' && typeof (window as any).electronAPI === 'object';
+  if (typeof window === 'undefined') return false;
+  // Web 兼容层也提供 electronAPI，只有真实 preload 暴露此标记。
+  const api = (window as any).electronAPI;
+  return typeof api?.isElectron === 'function' && api.isElectron() === true;
 }
 
 /**
@@ -104,6 +107,10 @@ export async function isServerReachable(url: string, timeoutMs = 8000): Promise<
  * 解决“服务器换 IP 后客户端仍连旧地址导致卡在登录/加载”的问题。
  */
 export async function initDynamicServerUrl(): Promise<void> {
+  if (!isElectronEnv()) {
+    dynamicServerUrl = null;
+    return;
+  }
   const persisted = readPersistedServerUrl();
   const legacy = readLegacyPersistedServerUrl();
 
@@ -213,11 +220,6 @@ function getBaseUrl(): string {
 
 // WebSocket URL 构建
 const getWebSocketUrl = () => {
-  const persisted = getDynamicServerUrl();
-  // 桌面端使用动态配置
-  if (persisted) {
-    return `${persisted.replace(/^http/, 'ws')}/api/v1/ws/market`;
-  }
   const gateway = getBaseUrl();
   if (gateway) {
     return `${gateway.replace(/^http/, 'ws')}/api/v1/ws/market`;
