@@ -20,6 +20,9 @@
 socket 时，需将实际路径挂载到此位置。CPU 服务器可在 `config/runtime.env` 配置
 `TRAINING_DOCKER_GPU_PROBE=false` 后重启后端，跳过创建容器的 GPU 兜底探针，避免
 vfs 存储下查询节点状态时复制大型训练镜像；默认开启，本地 GPU 检测仍然执行。
+训练编排器的 Docker API 等待上限默认 600 秒，可在 `config/runtime.env` 配置
+`TRAINING_DOCKER_API_TIMEOUT_SECONDS` 后重启后端。该值约束容器创建等 Docker 请求，
+与用户选择的训练时长预算分别生效；vfs 复制大镜像时，任务保持容器准备状态。
 
 - 训练编排器 `LocalDockerOrchestrator._build_config_yaml` 已支持透传以下配置块：
   - `model.early_stopping_rounds`

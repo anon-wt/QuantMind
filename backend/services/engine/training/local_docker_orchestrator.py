@@ -56,6 +56,19 @@ _TRAINING_IMAGE = (os.getenv("TRAINING_IMAGE") or "quantmind-trainer:latest").st
 _TRAINING_BOOTSTRAP_PIP = (os.getenv("TRAINING_BOOTSTRAP_PIP") or "duckdb pyqlib").strip()
 
 
+def _docker_api_timeout_seconds() -> int:
+    """vfs 等存储驱动复制训练镜像可能超过 SDK 默认的 60 秒。"""
+    raw = os.getenv("TRAINING_DOCKER_API_TIMEOUT_SECONDS", "600").strip()
+    try:
+        timeout = int(raw)
+        if timeout > 0:
+            return timeout
+    except ValueError:
+        pass
+    logger.warning("Invalid TRAINING_DOCKER_API_TIMEOUT_SECONDS; using 600 seconds")
+    return 600
+
+
 def _host_mem_limit_gb() -> str | None:
     """训练容器的 mem_limit（GB 字符串），保护宿主机不被训练进程打爆。
 
@@ -290,7 +303,8 @@ def resume_paused_containers_from_state(
 
 class LocalDockerOrchestrator(TrainingOrchestrator):
     def __init__(self):
-        self.docker = DockerClient.from_env()
+        self.docker_api_timeout = _docker_api_timeout_seconds()
+        self.docker = DockerClient.from_env(timeout=self.docker_api_timeout)
         self.api_base = (
             os.getenv("QUANTMIND_API_BASE_URL") or "http://quantmind-api:8000"
         ).strip()
@@ -706,7 +720,11 @@ class LocalDockerOrchestrator(TrainingOrchestrator):
                 # 增量记录日志，防止覆盖 [SYSTEM] 训练任务已创建
                 record.logs = (
                     record.logs or ""
-                ) + f"Starting container: {_TRAINING_IMAGE}\n"
+                ) + (
+                    f"Starting container: {_TRAINING_IMAGE}\n"
+                    f"[SYSTEM] Docker API 等待上限 {self.docker_api_timeout}s；"
+                    "首次准备训练容器可能需要数分钟\n"
+                )
                 user_id = str(record.user_id or "unknown")
                 tenant_id = str(record.tenant_id or "default")
 
@@ -720,7 +738,10 @@ class LocalDockerOrchestrator(TrainingOrchestrator):
                     run_id=run_id,
                     tenant_id=tenant_id,
                     user_id=user_id,
-                    line=f"[SYSTEM] Starting container image: {_TRAINING_IMAGE}",
+                    line=(
+                        f"[SYSTEM] Starting container image: {_TRAINING_IMAGE}; "
+                        f"Docker API timeout={self.docker_api_timeout}s"
+                    ),
                     status="provisioning",
                     progress=5,
                 )
