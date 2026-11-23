@@ -613,6 +613,13 @@ awk '{print $1}' /proc/loadavg 2>/dev/null
         """
         import time
 
+        # CPU-only / vfs 部署可禁用容器 GPU 探针，避免状态查询复制整个训练镜像。
+        # 只影响此兜底探针，本地 nvidia-smi / torch 检测仍正常执行。
+        if _env_or("TRAINING_DOCKER_GPU_PROBE", "true").lower() in {
+            "0", "false", "no", "off",
+        }:
+            return []
+
         now = time.monotonic()
         if cls._gpu_probe_cache and now - cls._gpu_probe_cache[0] < cls._GPU_PROBE_TTL_SEC:
             return cls._gpu_probe_cache[1]

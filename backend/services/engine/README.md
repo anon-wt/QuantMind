@@ -15,6 +15,12 @@
 - 影响：自动推理链路在解析用户默认模型、策略绑定模型和系统兜底模型时，不再依赖 `asyncio.run()`。
 
 ## 模型训练闭环契约（2026-04-04）
+
+本地训练节点通过后端容器内的 `/var/run/docker.sock` 连接 Docker。宿主机使用自定义
+socket 时，需将实际路径挂载到此位置。CPU 服务器可在 `config/runtime.env` 配置
+`TRAINING_DOCKER_GPU_PROBE=false` 后重启后端，跳过创建容器的 GPU 兜底探针，避免
+vfs 存储下查询节点状态时复制大型训练镜像；默认开启，本地 GPU 检测仍然执行。
+
 - 训练编排器 `LocalDockerOrchestrator._build_config_yaml` 已支持透传以下配置块：
   - `model.early_stopping_rounds`
   - `label.target_horizon_days/target_mode/label_formula/effective_trade_date/training_window`
