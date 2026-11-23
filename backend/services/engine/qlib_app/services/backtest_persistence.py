@@ -12,6 +12,7 @@ from sqlalchemy import text
 from backend.services.engine.qlib_app.schemas.backtest import QlibBacktestResult
 from backend.shared.database_manager_v2 import get_session
 from backend.shared.utils import normalize_user_id
+from backend.shared.utc_datetime import to_utc_iso
 from backend.services.engine.qlib_app.utils.structured_logger import StructuredTaskLogger
 
 logger = logging.getLogger(__name__)
@@ -170,6 +171,56 @@ class BacktestPersistence:
                 },
             )
             await self._prune_user_history(session, user_id, tenant_id)
+
+    async def mark_failed(
+        self,
+        *,
+        backtest_id: str,
+        user_id: str,
+        tenant_id: str,
+        task_id: str,
+        completed_at: datetime,
+        error_message: str,
+        full_error: str,
+        execution_time: float,
+    ) -> None:
+        """终结已提交的任务，保留原始创建时间、配置与已归档的大字段。"""
+        failure_json = json.dumps(
+            {
+                "status": "failed",
+                "completed_at": to_utc_iso(completed_at),
+                "error_message": error_message,
+                "full_error": full_error,
+                "execution_time": execution_time,
+            },
+            ensure_ascii=False,
+        )
+        async with get_session() as session:
+            await session.execute(
+                text("""
+                    UPDATE qlib_backtest_runs SET
+                      status = 'failed',
+                      completed_at = :completed_at,
+                      task_id = COALESCE(task_id, :task_id),
+                      result_json = COALESCE(result_json, '{}'::jsonb)
+                        || jsonb_build_object(
+                          'backtest_id', backtest_id, 'user_id', user_id,
+                          'tenant_id', tenant_id, 'created_at', created_at,
+                          'config', config_json, 'task_id', COALESCE(task_id, :task_id)
+                        ) || CAST(:failure_json AS jsonb)
+                    WHERE backtest_id = :backtest_id
+                      AND user_id = :user_id AND tenant_id = :tenant_id
+                      AND status IN ('pending', 'queued', 'running', 'failed')
+                """),
+                {
+                    "backtest_id": backtest_id,
+                    "user_id": normalize_user_id(user_id),
+                    "tenant_id": tenant_id,
+                    "task_id": task_id,
+                    "completed_at": completed_at,
+                    "failure_json": failure_json,
+                },
+            )
 
     async def get_result(
         self,

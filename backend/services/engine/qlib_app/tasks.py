@@ -35,6 +35,7 @@ from backend.services.engine.qlib_app.services.optimization_service import (
     OptimizationCancelledError,
 )
 from backend.shared.auth import get_internal_call_secret
+from backend.shared.utc_datetime import utc_now
 from backend.services.engine.qlib_app.utils.structured_logger import (
     StructuredTaskLogger,
 )
@@ -404,9 +405,6 @@ def _get_qlib_service_instance() -> Any:
     name="qlib_app.tasks.run_backtest_async",
     max_retries=2,
     default_retry_delay=60,
-    autoretry_for=(Exception,),
-    retry_backoff=True,
-    retry_jitter=True,
 )
 def run_backtest_async(self, request_dict: dict[str, Any]) -> dict[str, Any]:
     """异步执行回测任务"""
@@ -417,6 +415,8 @@ def run_backtest_async(self, request_dict: dict[str, Any]) -> dict[str, Any]:
     task_id = self.request.id
     request = deserialize_backtest_task_request(request_dict)
     backtest_id = request_dict.get("backtest_id")
+    started_at = utc_now()
+    result = None
 
     tenant_id = request.tenant_id
     task_log = TaskStructuredLogger(
@@ -451,26 +451,29 @@ def run_backtest_async(self, request_dict: dict[str, Any]) -> dict[str, Any]:
     )
 
     try:
-        service = _get_qlib_service_instance()
-        service.initialize()
-
-        # 进度：10%
-        self.update_state(state="PROGRESS", meta={"progress": 0.1, "status": "running"})
-        _send_progress_update(
-            {
-                "backtest_id": backtest_id,
-                "progress": 0.1,
-                "status": "running",
-                "message": "Qlib initialized",
-            }
-        )
-
         log_key = f"{tenant_id}:{backtest_id}"
         log_context = f"backtest_id={backtest_id} task_id={task_id} tenant_id={tenant_id} user_id={request.user_id}"
         with TaskLogCapture(log_key, context_label=log_context):
+            service = _get_qlib_service_instance()
+            service.initialize()
+
+            # 进度：10%
+            self.update_state(
+                state="PROGRESS", meta={"progress": 0.1, "status": "running"}
+            )
+            _send_progress_update(
+                {
+                    "backtest_id": backtest_id,
+                    "progress": 0.1,
+                    "status": "running",
+                    "message": "Qlib initialized",
+                }
+            )
             result = _run_async(service.run_backtest(request))
 
         result_dict = _to_jsonable(result)
+        if result_dict.get("status") == "failed":
+            raise RuntimeError(result_dict.get("error_message") or "Backtest failed")
 
         # 进度：100%
         self.update_state(state="SUCCESS", meta={"result": result_dict})
@@ -514,8 +517,36 @@ def run_backtest_async(self, request_dict: dict[str, Any]) -> dict[str, Any]:
     except Exception as exc:
         import traceback
 
-        full_error = traceback.format_exc()
+        full_error = getattr(result, "full_error", None) or traceback.format_exc()
         task_log.exception(f"Backtest failed: {exc}")
+        # 初始化在 service.run_backtest() 之前，必须在任务边界补齐失败落库。
+        # 已运行任务的租约会在 finally 终结；同 ID 自动重试只会被当成重复投递忽略。
+        try:
+            from backend.services.engine.qlib_app.services.backtest_persistence import (
+                BacktestPersistence,
+            )
+
+            completed_at = utc_now()
+            _run_async(
+                BacktestPersistence().mark_failed(
+                    backtest_id=backtest_id,
+                    user_id=request.user_id,
+                    tenant_id=tenant_id,
+                    completed_at=completed_at,
+                    task_id=task_id,
+                    error_message=str(exc),
+                    full_error=full_error,
+                    execution_time=(completed_at - started_at).total_seconds(),
+                )
+            )
+        except Exception:
+            task_log.exception("Failed to persist backtest failure")
+        try:
+            from backend.services.engine.qlib_app.cache_manager import get_cache_manager
+
+            get_cache_manager().invalidate_user_history(f"{tenant_id}:{request.user_id}")
+        except Exception:
+            task_log.warning("Failed to invalidate failed backtest history")
         # 避免以 FAILURE + 普通 dict 写入结果后端，触发 Celery 异常反序列化错误。
         self.update_state(
             state="PROGRESS", meta={"status": "failed", "error": str(exc)}
@@ -523,7 +554,10 @@ def run_backtest_async(self, request_dict: dict[str, Any]) -> dict[str, Any]:
         _send_progress_update(
             {
                 "backtest_id": backtest_id,
+                "user_id": request.user_id,
+                "tenant_id": tenant_id,
                 "status": "failed",
+                "progress": 1.0,
                 "error_message": str(exc),
                 "full_error": full_error,
             }
