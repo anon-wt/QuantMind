@@ -291,11 +291,16 @@ export const ModelHubPage: React.FC = () => {
             </div>
             <div>
               <h3 className="text-base font-black text-slate-700 !mb-1">模型广场暂时不可用</h3>
-              <p className="text-xs text-slate-400 !mb-0">未展示示例数据。请检查 QuantDB 服务配置后重试。</p>
+              <p role="alert" className="text-xs text-slate-500 !mb-0 break-words">{loadError}</p>
             </div>
-            <Button icon={<RefreshCw size={14} />} className="rounded-xl font-bold mt-2" onClick={fetchHubModels}>
-              重新连接
-            </Button>
+            <div className="flex flex-wrap justify-center gap-2 mt-2">
+              <Button icon={<RefreshCw size={14} />} className="rounded-xl font-bold" onClick={fetchHubModels}>
+                重新连接
+              </Button>
+              <Button className="rounded-xl font-bold" onClick={() => navigate('/user-center?tab=data-platform')}>
+                数据平台配置
+              </Button>
+            </div>
           </div>
         ) : models.length === 0 ? (
           <div className="bg-white rounded-3xl p-16 text-center border border-slate-200/80 shadow-sm flex flex-col items-center justify-center gap-4">

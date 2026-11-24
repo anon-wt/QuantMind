@@ -129,34 +129,49 @@ class ModelHubService {
     page?: number;
     page_size?: number;
   }): Promise<HubModelListResponse> {
+    const queryParams = {
+      market: params.market && params.market !== 'ALL' ? params.market : undefined,
+      algorithm: params.algorithm && params.algorithm !== 'ALL' ? params.algorithm : undefined,
+      sort_by: params.sort_by || 'sharpe',
+      q: params.query || undefined,
+      author: params.author || undefined,
+      page: params.page || 1,
+      page_size: params.page_size || 20,
+    };
     try {
       const resp = await this.axiosInstance.get('/api/v1/hub/models', {
-        params: {
-          market: params.market && params.market !== 'ALL' ? params.market : undefined,
-          algorithm: params.algorithm && params.algorithm !== 'ALL' ? params.algorithm : undefined,
-          sort_by: params.sort_by || 'sharpe',
-          q: params.query || undefined,
-          author: params.author || undefined,
-          page: params.page || 1,
-          page_size: params.page_size || 20,
-        },
+        params: queryParams,
       });
       return resp.data;
     } catch (err: any) {
       console.warn('请求 QuantDB 模型广场失败，尝试使用本地网关回退:', err);
-      // 回退使用统一网关
-      const fallbackUrl = `${SERVICE_ENDPOINTS.API_GATEWAY}/api/v1/hub/models`;
-      const fallbackResp = await axios.get(fallbackUrl, {
-        params,
-        headers: {
-          Authorization: `Bearer ${authService.getAccessToken() || ''}`,
-        },
-      }).catch(() => null);
-
-      if (fallbackResp?.data) {
+      // API_GATEWAY 已包含 /api/v1；两条路径必须使用同一套上游参数。
+      const token = authService.getAccessToken();
+      try {
+        const fallbackResp = await axios.get<HubModelListResponse>(
+          `${SERVICE_ENDPOINTS.API_GATEWAY}/hub/models`,
+          {
+            params: queryParams,
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+            timeout: 30000,
+          },
+        );
         return fallbackResp.data;
+      } catch (fallbackError: any) {
+        const detail = fallbackError?.response?.data?.detail;
+        const responseText = fallbackError?.response?.data;
+        if (typeof detail === 'string' && detail.trim()) {
+          throw new Error(detail);
+        }
+        if (typeof responseText === 'string' && responseText.trim() === '模型广场服务不可达') {
+          throw new Error('后端无法连接云端模型广场，请检查服务器网络和 QuantDB 服务地址。');
+        }
+        const status = fallbackError?.response?.status;
+        if (status) {
+          throw new Error(`模型广场网关请求失败（HTTP ${status}），请检查后端服务后重试。`);
+        }
+        throw new Error('无法连接模型广场及本地网关，请检查网络和后端服务器连接后重试。');
       }
-      throw err;
     }
   }
 
