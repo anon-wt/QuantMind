@@ -10,6 +10,11 @@
 
 所有脚本支持 Ubuntu 22.04 / 24.04，默认项目目录为 `/opt/quantmind`。完整说明（含 AutoDL 节点）见 **[docs/部署指南.md](../docs/部署指南.md)**。
 
+Celery worker 设置 `DB_USE_NULL_POOL=true`：因子定时任务与 Qlib 回测使用不同的
+持久事件循环，asyncpg 连接不能跨循环复用。该配置通过现有数据库管理器启用
+SQLAlchemy `NullPool`，每次会话结束即关闭连接；Web 服务默认保留连接池。
+自定义 Compose 部署也须在 `celery-worker` 环境中保留此项。
+
 ## 完整部署
 
 完整部署包 CDN 目录默认是 `https://cdn.quantmind.cloud/quantmind-offline`，应包含：

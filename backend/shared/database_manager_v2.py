@@ -24,6 +24,7 @@ except Exception:
     pass
 
 from sqlalchemy import event, text
+from sqlalchemy.pool import NullPool
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -65,6 +66,9 @@ class DatabaseConfig:
         self.pool_timeout = float(os.getenv("DB_POOL_TIMEOUT", "30"))
         self.pool_recycle = int(os.getenv("DB_POOL_RECYCLE", "3600"))
         self.pool_pre_ping = os.getenv("DB_POOL_PRE_PING", "true").lower() == "true"
+        # Celery mixes persistent async bridges in one process. Its connections
+        # must not be reused by a different event loop.
+        self.use_null_pool = os.getenv("DB_USE_NULL_POOL", "false").lower() == "true"
 
         # 连接配置
         self.echo = os.getenv("DB_ECHO", "false").lower() == "true"
@@ -102,6 +106,23 @@ class DatabaseConfig:
         password = urllib.parse.quote(self.password)
         return f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{self.database}"
 
+    def engine_options(self, *, slave: bool = False) -> dict:
+        options = {
+            "pool_pre_ping": self.pool_pre_ping,
+            "echo": self.echo,
+            "echo_pool": self.echo_pool,
+        }
+        if self.use_null_pool:
+            return {**options, "poolclass": NullPool}
+        divisor = 2 if slave else 1
+        return {
+            **options,
+            "pool_size": self.pool_size // divisor,
+            "max_overflow": self.max_overflow // divisor,
+            "pool_timeout": self.pool_timeout,
+            "pool_recycle": self.pool_recycle,
+        }
+
 
 class DatabaseManager:
     """数据库连接池管理器"""
@@ -128,13 +149,7 @@ class DatabaseManager:
         logger.info(f"Creating master database engine with URL: {master_url}")
         self._master_engine = create_async_engine(
             master_url,
-            pool_size=self.config.pool_size,
-            max_overflow=self.config.max_overflow,
-            pool_timeout=self.config.pool_timeout,
-            pool_recycle=self.config.pool_recycle,
-            pool_pre_ping=self.config.pool_pre_ping,
-            echo=self.config.echo,
-            echo_pool=self.config.echo_pool,
+            **self.config.engine_options(),
         )
 
         # 添加连接事件监听
@@ -152,13 +167,7 @@ class DatabaseManager:
             try:
                 slave_engine = create_async_engine(
                     self.config.get_slave_url(host, port),
-                    pool_size=self.config.pool_size // 2,  # 从库连接池减半
-                    max_overflow=self.config.max_overflow // 2,
-                    pool_timeout=self.config.pool_timeout,
-                    pool_recycle=self.config.pool_recycle,
-                    pool_pre_ping=self.config.pool_pre_ping,
-                    echo=self.config.echo,
-                    echo_pool=self.config.echo_pool,
+                    **self.config.engine_options(slave=True),
                 )
 
                 self._setup_engine_events(slave_engine, f"slave-{idx}")
@@ -292,13 +301,7 @@ class DatabaseManager:
         # 主库连接池状态
         if self._master_engine:
             pool = self._master_engine.pool
-            status["master"] = {
-                "size": pool.size(),
-                "checked_in": pool.checkedin(),
-                "checked_out": pool.checkedout(),
-                "overflow": pool.overflow(),
-                "total": pool.size() + pool.overflow(),
-            }
+            status["master"] = self._pool_status(pool)
 
         # 从库连接池状态
         status["slaves"] = []
@@ -307,15 +310,31 @@ class DatabaseManager:
             status["slaves"].append(
                 {
                     "index": idx,
-                    "size": pool.size(),
-                    "checked_in": pool.checkedin(),
-                    "checked_out": pool.checkedout(),
-                    "overflow": pool.overflow(),
-                    "total": pool.size() + pool.overflow(),
+                    **self._pool_status(pool),
                 }
             )
 
         return status
+
+    @staticmethod
+    def _pool_status(pool) -> dict:
+        if isinstance(pool, NullPool):
+            # NullPool does not retain or count live connections.
+            return {
+                "pooling": False,
+                "size": 0,
+                "checked_in": 0,
+                "checked_out": None,
+                "overflow": 0,
+                "total": None,
+            }
+        return {
+            "size": pool.size(),
+            "checked_in": pool.checkedin(),
+            "checked_out": pool.checkedout(),
+            "overflow": pool.overflow(),
+            "total": pool.size() + pool.overflow(),
+        }
 
     async def close(self):
         """关闭所有数据库连接"""

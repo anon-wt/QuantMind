@@ -389,6 +389,8 @@ services:
 
       # 数据库配置
       - DB_DRIVER=asyncpg
+      # 同一子进程会切换不同任务的事件循环，禁止跨循环复用 asyncpg 连接。
+      - DB_USE_NULL_POOL=true
       - DB_HOST=db
       - DB_PORT=5432
       - DB_NAME=${DB_NAME:-quantmind}
