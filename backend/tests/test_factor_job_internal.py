@@ -162,6 +162,48 @@ def test_stop_during_computation_cancels_without_publishing(runner):
     jobs.confirm_cancelled.assert_awaited_once()
 
 
+def test_unsupported_job_does_not_hold_the_backtest_slot(runner):
+    client, jobs, _, executor, row = runner
+    row["kind"] = "doc_parse"
+    response = client.post(URL, json=BODY, headers=HEADERS)
+    assert response.json()["status"] == "failed"
+    assert jobs.finish.call_args.kwargs["error_code"] == "UnsupportedFactorJob"
+    executor.assert_not_called()
+
+
+def test_completed_job_projects_full_progress():
+    from datetime import datetime, timezone
+    from backend.shared.utc_datetime import to_utc_iso
+    from backend.shared.secret_redaction import redact_data, redact_text
+
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "services/engine/alpha_agent/factor_job_api.py"
+    )
+    function = next(
+        n
+        for n in ast.parse(path.read_text(encoding="utf-8")).body
+        if isinstance(n, ast.FunctionDef) and n.name == "_public"
+    )
+    namespace = {
+        "datetime": datetime,
+        "timezone": timezone,
+        "to_utc_iso": to_utc_iso,
+        "redact_data": redact_data,
+        "redact_text": redact_text,
+    }
+    exec(
+        compile(ast.Module(body=[function], type_ignores=[]), str(path), "exec"),
+        namespace,
+    )
+    snapshot = {"stage": "factor_eval", "progress_pct": 45}
+    result = namespace["_public"](
+        {"job_id": "a", "status": "completed", "progress_snapshot": snapshot}
+    )
+    assert result["progress_snapshot"]["progress_pct"] == 100
+    assert snapshot["progress_pct"] == 45
+
+
 def test_statistical_admission_requires_exact_fixed_expression():
     path = (
         Path(__file__).resolve().parents[1]

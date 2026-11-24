@@ -405,6 +405,12 @@ def _public(job: dict) -> dict:
         if key in job
     }
     output["request"] = safe_request
+    if output.get("status") == "completed":
+        output["progress_snapshot"] = {
+            **(output.get("progress_snapshot") or {}),
+            "stage": "completed",
+            "progress_pct": 100,
+        }
     for key in ("created_at", "updated_at", "completed_at"):
         value = output.get(key)
         if value is None:

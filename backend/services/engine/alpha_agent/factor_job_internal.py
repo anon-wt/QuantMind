@@ -50,10 +50,6 @@ async def run_factor_job(payload: FactorJobExecutionRequest, request: Request):
         raise HTTPException(409, "Factor execution generation changed")
     if row["status"] in {"completed", "failed", "cancelled"}:
         return {"job_id": payload.job_id, "status": row["status"]}
-    if row["kind"] not in {"backtest", "validate"}:
-        raise HTTPException(
-            400, "This engine runner accepts backtest and validation jobs"
-        )
     budget = get_budget()
     lease = await asyncio.to_thread(
         budget.store.get_lease,
@@ -82,6 +78,16 @@ async def run_factor_job(payload: FactorJobExecutionRequest, request: Request):
         return {"job_id": payload.job_id, "status": "cancelled"}
     if claim != "claimed":
         return {"job_id": payload.job_id, "status": row["status"]}
+    if row["kind"] not in {"backtest", "validate"}:
+        await jobs.finish(
+            payload.job_id,
+            **owner,
+            generation=payload.execution_generation,
+            error_code="UnsupportedFactorJob",
+            error_message="当前 OSS 执行入口尚未接入此类作业，请联系维护人员；回测名额已释放",
+        )
+        latest = await jobs.get(payload.job_id, **owner, consistent=True)
+        return {"job_id": payload.job_id, "status": latest["status"]}
 
     body = row["request_snapshot"]["request"]
     items = body.get("factor_items") or [body]
