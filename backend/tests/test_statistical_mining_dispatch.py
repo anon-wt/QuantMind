@@ -305,6 +305,31 @@ def test_controller_cancellation_stops_child_without_publishing_results(controll
     launcher._terminate_process_group.assert_awaited_once_with(process.pid)
 
 
+def test_queued_status_uses_owned_database_row_before_worker_attaches(monkeypatch):
+    import asyncio
+
+    row = {
+        "task_id": "waiting",
+        "tenant_id": "tenant",
+        "user_id": "owner",
+        "algorithm": "statistical",
+        "status": "queued",
+        "executor_json": {"private": "must-not-be-public"},
+        "params_snapshot": {"mining_start": "2020-01-01"},
+    }
+    store = SimpleNamespace(get_for_owner_with_spec=AsyncMock(return_value=row))
+    monkeypatch.setattr(runtime, "_task_store", lambda: store)
+    result = asyncio.run(
+        runtime.owned_statistical_task("waiting", tenant_id="tenant", user_id="owner")
+    )
+    assert result["status"] == "queued"
+    assert result["mining_start"] == "2020-01-01"
+    assert "executor_json" not in result
+    store.get_for_owner_with_spec.assert_awaited_once_with(
+        "waiting", tenant_id="tenant", user_id="owner", consistent=True
+    )
+
+
 def test_controller_refuses_changed_snapshot_artifacts(monkeypatch, controller):
     import asyncio
 

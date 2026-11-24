@@ -162,6 +162,28 @@ def _read_json(path: Path, limit=4 * 1024 * 1024) -> dict:
     return result
 
 
+async def owned_statistical_task(task_id: str, *, tenant_id: str, user_id: str):
+    """Queued/restarted tasks must remain readable before a worker attaches."""
+    from backend.services.engine.alpha_agent.public_task import public_task
+
+    store = _task_store()
+    owner = {"tenant_id": tenant_id, "user_id": user_id}
+    row = await store.get_for_owner_with_spec(task_id, **owner, consistent=True)
+    if not row or row.get("algorithm") != "statistical":
+        return None
+    if row["status"] == "completed":
+        row["result"] = await store.get_result(task_id, **owner)
+    params = row["params_snapshot"]
+    return {
+        **public_task(row),
+        "algorithm": "statistical",
+        **{
+            k: params.get(k)
+            for k in ("mining_start", "mining_end", "valid_start", "valid_end")
+        },
+    }
+
+
 def result_factors(task_id: str, fingerprint: str, params: dict, result: dict):
     from backend.services.engine.alpha_agent.statistical.materialization import (
         trusted_statistical_candidate,

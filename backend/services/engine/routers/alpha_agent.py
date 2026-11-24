@@ -209,10 +209,18 @@ async def _run_subprocess_tracked(
 
 async def _require_owned_task(task_id: str, request: Request) -> dict:
     """返回任务状态，若不属于当前认证用户则 404（不泄露任务是否存在）。"""
-    auth_user_id, _ = get_authenticated_identity(request)
+    auth_user_id, auth_tenant_id = get_authenticated_identity(request)
     launcher = get_launcher()
     status = await launcher.get_task_status(task_id)
-    if not status or status.get("user_id") != auth_user_id:
+    if not status or status.get("algorithm") == "statistical":
+        from backend.services.engine.alpha_agent.statistical_runtime import (
+            owned_statistical_task,
+        )
+        status = await owned_statistical_task(
+            task_id, tenant_id=auth_tenant_id, user_id=auth_user_id
+        )
+    if (not status or status.get("user_id") != auth_user_id
+            or status.get("tenant_id") != auth_tenant_id):
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
     return status
 
@@ -443,7 +451,16 @@ async def get_task_status(task_id: str, request: Request):
 @router.post("/tasks/{task_id}/cancel")
 async def cancel_task(task_id: str, request: Request):
     """取消演化任务"""
-    await _require_owned_task(task_id, request)
+    status = await _require_owned_task(task_id, request)
+    if status.get("algorithm") == "statistical":
+        from backend.services.engine.alpha_agent.statistical_runtime import _task_store
+
+        state = await _task_store().request_cancel(
+            task_id, tenant_id=status["tenant_id"], user_id=status["user_id"]
+        )
+        if state is None:
+            raise HTTPException(400, "任务已结束，无法取消")
+        return {"code": 200, "data": {"task_id": task_id, "status": state}}
     launcher = get_launcher()
     ok = await launcher.cancel_task(task_id)
     if not ok:
