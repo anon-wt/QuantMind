@@ -109,6 +109,19 @@ def _apply_resource_limits() -> None:
     os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
 
+def _require_listing_metadata(metadata, min_list_days: int) -> None:
+    if min_list_days > 0 and (
+        metadata.empty
+        or "listing_date" not in metadata.columns
+        or not metadata["listing_date"].notna().any()
+    ):
+        raise ValueError(
+            "当前 A 股数据源缺少股票上市日期，无法执行上市天数过滤。"
+            "请在个人中心配置数据源凭据，并在数据管理中初始化股票基础资料；"
+            "仅做纯量价研究时，可明确将最少上市交易日设为 0。"
+        )
+
+
 def _prepare_snapshot(
     request: dict[str, Any], request_path: Path, progress_path: Path
 ) -> dict[str, Any]:
@@ -160,6 +173,7 @@ def _prepare_snapshot(
             qlib_dir=qlib_dir, calendar=calendar,
         )
     metadata = panel.load_symbol_metadata()
+    _require_listing_metadata(metadata, config.tradability.min_list_days)
     task_dir = request_path.resolve().parent
     panel_path = task_dir / "statistical_panel.parquet"
     metadata_path = task_dir / "statistical_metadata.parquet"

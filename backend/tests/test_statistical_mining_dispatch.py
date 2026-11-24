@@ -371,3 +371,18 @@ def test_qlib_loading_respects_statistical_worker_capacity(monkeypatch):
     )
     assert init.call_count == 3
     assert all(call.kwargs["kernels"] == 1 for call in init.call_args_list)
+
+
+def test_missing_listing_metadata_has_actionable_error_instead_of_empty_success():
+    import pandas as pd
+    from backend.services.engine.alpha_agent.statistical.worker import (
+        _require_listing_metadata,
+    )
+
+    for metadata in (pd.DataFrame(), pd.DataFrame({"listing_date": [pd.NaT]})):
+        with pytest.raises(ValueError, match="初始化股票基础资料"):
+            _require_listing_metadata(metadata, 120)
+        _require_listing_metadata(metadata, 0)
+    _require_listing_metadata(
+        pd.DataFrame({"listing_date": [pd.Timestamp("2020-01-01")]}), 120
+    )

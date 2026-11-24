@@ -421,7 +421,15 @@ async def run_statistical(launcher, record: dict):
                                 )
                             )
                             detail = tail.read().decode(errors="replace")
-                        raise RuntimeError(f"统计计算进程失败：{detail[-1800:]}")
+                        message = next(
+                            (
+                                line
+                                for line in reversed(detail.splitlines())
+                                if line.startswith("statistical worker failed:")
+                            ),
+                            f"统计计算进程退出，退出码 {process.returncode}",
+                        )
+                        raise RuntimeError(message[-1800:])
                 result = _read_json(result_path)
                 frozen = await store.get_for_dispatch(task_id)
                 fingerprint = frozen["execution_fingerprint"]
