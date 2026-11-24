@@ -56,7 +56,9 @@ def _qlib_features(
     import qlib.data as qd  # noqa: PLC0415
     from qlib.constant import REG_CN  # noqa: PLC0415
 
-    qlib.init(provider_uri=qlib_dir, region=REG_CN)
+    # Match the bounded statistical worker; Qlib otherwise forks one process
+    # per host core and can exhaust its file-descriptor/memory limits.
+    qlib.init(provider_uri=qlib_dir, region=REG_CN, kernels=1)
     return qd.D.features(instruments, fields, start_time=start, end_time=end)
 
 
@@ -67,7 +69,7 @@ def qlib_calendar(
     import qlib.data as qd  # noqa: PLC0415
     from qlib.constant import REG_CN  # noqa: PLC0415
 
-    qlib.init(provider_uri=qlib_dir, region=REG_CN)
+    qlib.init(provider_uri=qlib_dir, region=REG_CN, kernels=1)
     return pd.DatetimeIndex(qd.D.calendar(start_time=start, end_time=end))
 
 
@@ -85,7 +87,7 @@ def qlib_instruments(
     import qlib.data as qd  # noqa: PLC0415
     from qlib.constant import REG_CN  # noqa: PLC0415
 
-    qlib.init(provider_uri=qlib_dir, region=REG_CN)
+    qlib.init(provider_uri=qlib_dir, region=REG_CN, kernels=1)
     return list(qd.D.list_instruments(qd.D.instruments(market=market), as_list=True))
 
 

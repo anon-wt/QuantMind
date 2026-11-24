@@ -343,3 +343,31 @@ def test_controller_refuses_changed_snapshot_artifacts(monkeypatch, controller):
     assert launcher._tasks["stat-run"].status.value == "failed"
     assert "校验失败" in launcher._tasks["stat-run"].error_message
     launcher._terminate_process_group.assert_awaited_once_with(process.pid)
+
+
+def test_qlib_loading_respects_statistical_worker_capacity(monkeypatch):
+    import sys
+    from backend.services.engine.alpha_agent.statistical import panel
+
+    init = MagicMock()
+    data = SimpleNamespace(
+        D=SimpleNamespace(
+            features=MagicMock(return_value="panel"),
+            calendar=MagicMock(return_value=["2020-01-02"]),
+            instruments=MagicMock(return_value={"market": "all"}),
+            list_instruments=MagicMock(return_value=["sh600000"]),
+        )
+    )
+    monkeypatch.setitem(sys.modules, "qlib", SimpleNamespace(init=init, data=data))
+    monkeypatch.setitem(sys.modules, "qlib.data", data)
+    monkeypatch.setitem(sys.modules, "qlib.constant", SimpleNamespace(REG_CN="cn"))
+    panel.qlib_calendar("2020-01-01", "2020-12-31", qlib_dir="/public")
+    assert panel.qlib_instruments("all", qlib_dir="/public") == ["sh600000"]
+    assert (
+        panel._qlib_features(
+            ["sh600000"], ["$close"], "2020-01-01", "2020-12-31", "/public"
+        )
+        == "panel"
+    )
+    assert init.call_count == 3
+    assert all(call.kwargs["kernels"] == 1 for call in init.call_args_list)
