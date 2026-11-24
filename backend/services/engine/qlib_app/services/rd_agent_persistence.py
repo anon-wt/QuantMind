@@ -529,18 +529,34 @@ class RDAgentFactorPersistence:
                 results.append(item)
             return results
 
-    async def get_factor(self, factor_id: str) -> dict[str, Any] | None:
-        """获取单个因子详情"""
+    async def get_factor(
+        self,
+        factor_id: str,
+        *,
+        tenant_id: str | None = None,
+        user_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Read factor details, enforcing both owner dimensions when supplied.
+
+        Legacy callers still authorize their unscoped lookup separately. Durable
+        factor jobs pass verified identity and require filtering in the query.
+        """
+        conditions = ["factor_id = :factor_id"]
+        params = {"factor_id": factor_id}
+        if tenant_id is not None or user_id is not None:
+            owner = OwnerScope(tenant_id, user_id)
+            conditions.extend(("tenant_id = :tenant_id", "user_id = :user_id"))
+            params.update(owner.sql_params())
         async with get_session(read_only=True) as session:
             row = await session.execute(
-                text("""
+                text(f"""
                     SELECT factor_id, factor_name, factor_code, status, ic_value, sharpe_ratio,
-                           annual_return, max_drawdown, rank_ic, user_id, market, universe,
+                           annual_return, max_drawdown, rank_ic, tenant_id, user_id, market, universe,
                            factor_formulation, data_source, date_range, metadata_json, created_at, updated_at
                     FROM rd_agent_factors
-                    WHERE factor_id = :factor_id
+                    WHERE {' AND '.join(conditions)}
                     """),
-                {"factor_id": factor_id},
+                params,
             )
             r = row.mappings().first()
             if not r:
