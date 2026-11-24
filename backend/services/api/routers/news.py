@@ -27,6 +27,10 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 
+from backend.services.api.routers.huntly_ui_proxy import (
+    rewrite_html,
+    rewrite_router_bundle,
+)
 from backend.services.api.user_app.middleware.auth import (
     get_current_user,
     require_admin,
@@ -1993,7 +1997,7 @@ async def admin_toggle_tag(tag_id: int, _admin: dict = Depends(require_admin)):
 # ---------------------------------------------------------------------------
 # Huntly SPA 的静态资源和 API 全是根路径（/static/...、/api/...），
 # 经反向代理挂子路径时需要：1) HTML 资源路径重写  2) JS 拦截脚本把 /api 调用
-# 重写到本代理路径  3) 代理目标把 /api 前缀剥掉转发给 Huntly 后端。
+# 重写到本代理路径  3) SPA browser router 设置 basename，兼容首页和子页面。
 # 这样 8089/6008 都不需要暴露，公网/局域网/本地统一走 QuantMind 后端。
 from fastapi.responses import HTMLResponse, PlainTextResponse
 
@@ -2061,14 +2065,24 @@ async def _huntly_ui_proxy_static(path: str, accept: str) -> Response:
     body = resp.content
 
     if "text/html" in content_type and body:
-        html = body.decode("utf-8", errors="replace")
-        html = html.replace('src="/static/', 'src="/api/v1/news/huntly-ui/static/')
-        html = html.replace('href="/static/', 'href="/api/v1/news/huntly-ui/static/')
-        html = html.replace('href="/favicon.ico"', 'href="/api/v1/news/huntly-ui/favicon.ico"')
-        html = html.replace('href="/apple-touch-icon.png"', 'href="/api/v1/news/huntly-ui/apple-touch-icon.png"')
-        html = html.replace('href="/site.webmanifest"', 'href="/api/v1/news/huntly-ui/site.webmanifest"')
-        html = html.replace("<head>", "<head>" + _HUNTLY_UI_REWRITE_SCRIPT, 1)
+        html = rewrite_html(
+            body.decode("utf-8", errors="replace"), _HUNTLY_UI_REWRITE_SCRIPT
+        )
         return HTMLResponse(content=html, status_code=resp.status_code)
+
+    if (
+        resp.status_code == 200
+        and path.startswith("static/js/main.")
+        and path.endswith(".js")
+    ):
+        try:
+            body = rewrite_router_bundle(body.decode("utf-8")).encode("utf-8")
+        except (UnicodeError, ValueError) as exc:
+            logger.error("Huntly UI router adaptation failed: %s", exc)
+            return PlainTextResponse(
+                "Huntly UI version is incompatible with the subpath proxy",
+                status_code=502,
+            )
 
     resp_headers = {}
     if "content-type" not in resp.headers:
