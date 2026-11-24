@@ -95,7 +95,10 @@ def _catalog():
                 + (["datayes"] if spec.dataset in datayes_sync.SUPPORTED else [])
                 + (["doris"] if spec.dataset in doris_supported else []),
                 "doris_note": "按已保存的 Doris 表映射同步；因子字段保留原始定义"
-                if spec.dataset in doris_supported else "请先发现并保存对应表映射",
+                if spec.dataset in doris_supported else (
+                    "Doris 首批暂不接入分钟与逐笔数据" if spec.dataset in doris_source.INTRADAY_DATASETS
+                    else "请先发现并保存对应表映射"
+                ),
                 "datayes_note": "由行情与估值派生（不含 QuantDB 专有因子）"
                 if spec.dataset in datayes_sync.DERIVED
                 else (

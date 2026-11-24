@@ -41,6 +41,8 @@ ENDPOINTS = {
     "getCSIIdxWeightZZ1000",
 }
 FACTOR_BINDINGS = {"l1_factors", "l1_l2_factors", "factor_dictionary"}
+INTRADAY_DATASETS = {"min1_kline", "min5_kline", "tick_data"}
+CUSTOM_DATASETS = {spec.dataset for spec in DATASETS} - INTRADAY_DATASETS
 SUPPORTED = datayes_sync.SUPPORTED | FACTOR_BINDINGS
 _EXTRA_REQUIRED = {
     "sector_concept": {"getEquIndustry"},
@@ -164,8 +166,8 @@ class DorisConfigRequest(BaseModel):
     @field_validator("dataset_mappings")
     @classmethod
     def valid_dataset_mappings(cls, value):
-        if set(value) - {spec.dataset for spec in DATASETS}:
-            raise ValueError("包含未知本地标准数据集")
+        if set(value) - CUSTOM_DATASETS:
+            raise ValueError("包含未知数据集，或暂不支持的分钟/逐笔数据集")
         return value
 
 
@@ -305,6 +307,7 @@ def public_config() -> dict:
                 "path": local_file_pattern(spec),
             }
             for spec in DATASETS
+            if spec.dataset in CUSTOM_DATASETS
         ],
     }
 
@@ -583,7 +586,7 @@ def normalize_standard(frame: pd.DataFrame, dataset: str) -> pd.DataFrame:
         )
         if not frame["symbol"].astype(str).str.fullmatch(r"\d{6}\.(SH|SZ|BJ)").all():
             raise ValueError("股票代码无法转换为 A 股标准后缀格式，请检查字段映射")
-    elif dataset != "trading_calendar":
+    elif dataset not in {"trading_calendar", "market_sentiment"}:
         raise ValueError("请将 Doris 股票代码字段映射到 symbol")
     if "time" in frame:
         # 避免将整数 YYYYMMDD 解释为 Unix 纳秒。

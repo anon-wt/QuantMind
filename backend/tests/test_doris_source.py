@@ -83,6 +83,18 @@ def test_arbitrary_sql_and_paths_are_rejected(table):
         ds.TableMapping(table=table)
 
 
+def test_intraday_mapping_is_rejected_instead_of_losing_timestamp_precision(config):
+    with pytest.raises(ValidationError, match="分钟/逐笔"):
+        ds.DorisConfigRequest(
+            host="doris.test",
+            database="market",
+            user="reader",
+            dataset_mappings={
+                "tick_data": {"table": "ticks"},
+            },
+        )
+
+
 def test_custom_field_mapping_uses_bound_half_open_dates(config, monkeypatch):
     client = object.__new__(ds.DorisClient)
     monkeypatch.setattr(
