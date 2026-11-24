@@ -522,6 +522,9 @@ try:
     from backend.services.engine.routers.alpha_agent import router as alpha_agent_router
 
     app.include_router(alpha_agent_router)
+    from backend.services.engine.alpha_agent.factor_job_internal import router as factor_job_internal_router
+
+    app.include_router(factor_job_internal_router)
     logger.info("✅ AlphaAgent integration routers loaded")
 except ImportError as e:
     logger.error(f"❌ Failed to load AlphaAgent routers: {e}")

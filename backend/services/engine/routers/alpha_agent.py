@@ -75,19 +75,25 @@ def _normalize_pool_ref(universe: str) -> str:
     return f"pool:{u}"
 
 
-def _universe_is_valid(universe: str) -> bool:
+def _universe_is_valid(
+    universe: str, *, tenant_id: str | None = None, user_id: str | None = None
+) -> bool:
     if universe in _VALID_CN_UNIVERSES:
         return True
     try:
         from backend.shared.stock_pool.resolver import resolve_pool_sync
 
-        snap = resolve_pool_sync(_normalize_pool_ref(universe))
+        snap = resolve_pool_sync(
+            _normalize_pool_ref(universe), tenant_id=tenant_id, user_id=user_id
+        )
         return bool(snap.unfiltered or snap.symbols)
     except Exception:
         return False
 
 
-def _resolve_custom_pool_instruments(universe: str) -> list[str] | None:
+def _resolve_custom_pool_instruments(
+    universe: str, *, tenant_id: str | None = None, user_id: str | None = None
+) -> list[str] | None:
     """非内置 code 时尝试全局股票池解析；内置池返回 None 走原逻辑。"""
     if universe in _VALID_CN_UNIVERSES:
         return None
@@ -95,12 +101,14 @@ def _resolve_custom_pool_instruments(universe: str) -> list[str] | None:
         from backend.shared.stock_pool.resolver import resolve_pool_sync
         from backend.shared.stock_utils import StockCodeUtil
 
-        snap = resolve_pool_sync(_normalize_pool_ref(universe))
+        snap = resolve_pool_sync(
+            _normalize_pool_ref(universe), tenant_id=tenant_id, user_id=user_id
+        )
         if snap.unfiltered:
             return None
         if not snap.symbols:
             return []
-        return sorted({StockCodeUtil.to_prefix(s) for s in snap.symbols})
+        return sorted({StockCodeUtil.to_qlib(s) for s in snap.symbols})
     except Exception as e:
         logger.warning("custom pool %s resolve failed: %s", universe, e)
         return None
@@ -2332,7 +2340,8 @@ def _vectorized_daily_spearman_ic(
 
 
 def _resolve_instruments_for_universe(
-    market_upper: str, universe: str
+    market_upper: str, universe: str, *,
+    tenant_id: str | None = None, user_id: str | None = None,
 ) -> list[str] | str:
     """返回 Qlib instruments 选择。
 
@@ -2343,7 +2352,9 @@ def _resolve_instruments_for_universe(
     from qlib.data import D
 
     if market_upper == "CN":
-        custom = _resolve_custom_pool_instruments(universe)
+        custom = _resolve_custom_pool_instruments(
+            universe, tenant_id=tenant_id, user_id=user_id
+        )
         if custom is not None:
             return custom
         if universe in _QLIB_NATIVE_UNIVERSES:
@@ -2355,7 +2366,7 @@ def _resolve_instruments_for_universe(
             universe_df = hub.fetch_universe_stocks(universe or "csi300")
             if universe_df is None or universe_df.empty:
                 raise RuntimeError(f"QuantDB returned no constituents for {universe}")
-            return sorted({StockCodeUtil.to_prefix(s) for s in universe_df["symbol"].tolist()[:500]})
+            return sorted({StockCodeUtil.to_qlib(s) for s in universe_df["symbol"].tolist()})
         except Exception as e:
             logger.warning("QuantDB universe %s unavailable, falling back to csi300: %s", universe, e)
             return D.instruments(market="csi300")

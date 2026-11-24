@@ -138,7 +138,7 @@ def _run_factor_job(
             logger.exception("[factor-job] durable claim failed for %s", job_id)
             raise self.retry(exc=exc, countdown=15) from exc
         if generation is None:
-            return {"job_id": job_id, "status": "not_claimed"}
+            raise self.retry(countdown=5)
     else:
         generation = int(record["execution_generation"])
     if prepare_only:
@@ -150,7 +150,9 @@ def _run_factor_job(
         logger.critical("[factor-job] internal engine secret is unavailable")
         raise self.retry(countdown=60)
     engine_url = (
-        engine_url or os.getenv("ENGINE_SERVICE_URL", "http://quantmind-engine:8001")
+        engine_url
+        or os.getenv("ENGINE_SERVICE_URL")
+        or os.getenv("BACKTEST_PROGRESS_URL", "http://quantmind:8001")
     ).rstrip("/")
     headers = {
         "X-Internal-Call": secret,

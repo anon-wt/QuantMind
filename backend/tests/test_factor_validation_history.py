@@ -52,9 +52,15 @@ def validation_api():
     columns = (
         "factor_id factor_name factor_code status ic_value sharpe_ratio "
         "annual_return max_drawdown rank_ic tenant_id user_id market universe "
-        "factor_formulation data_source date_range metadata_json created_at updated_at"
+        "factor_formulation data_source date_range metadata_json created_at updated_at archived_at"
     ).split()
     with engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE rd_agent_factor_revisions (factor_id TEXT, tenant_id TEXT, "
+                "user_id TEXT, revision_no INTEGER, factor_code TEXT)"
+            )
+        )
         conn.execute(
             text(
                 "CREATE TABLE rd_agent_factors ("
@@ -65,8 +71,8 @@ def validation_api():
         conn.execute(
             text(
                 "INSERT INTO rd_agent_factors "
-                "(factor_id,tenant_id,user_id,factor_name,metadata_json) "
-                "VALUES (:factor_id,:tenant_id,:user_id,:factor_name,:metadata)"
+                "(factor_id,tenant_id,user_id,factor_name,metadata_json,factor_code) "
+                "VALUES (:factor_id,:tenant_id,:user_id,:factor_name,:metadata,'original')"
             ),
             {
                 "factor_id": "factor-a",
@@ -75,6 +81,14 @@ def validation_api():
                 "factor_name": "Example",
                 "metadata": json.dumps({"algorithm": "statistical"}),
             },
+        )
+        conn.execute(
+            text(
+                "INSERT INTO rd_agent_factor_revisions VALUES "
+                "('factor-a','tenant-a','user-a',2,'original'),"
+                "('factor-a','tenant-a','user-a',3,'changed'),"
+                "('factor-a','other-tenant','user-a',99,'original')"
+            )
         )
 
     @asynccontextmanager
@@ -99,7 +113,15 @@ def validation_api():
         },
         class_name="RDAgentFactorPersistence",
     )
-    store = type("FactorStore", (), {"get_factor": reader})()
+    batch_reader = load_function(
+        "backend/services/engine/qlib_app/services/rd_agent_persistence.py",
+        "get_factors_by_ids",
+        {"Any": Any, "OwnerScope": OwnerScope},
+        class_name="RDAgentFactorPersistence",
+    )
+    store = type(
+        "FactorStore", (), {"get_factor": reader, "get_factors_by_ids": batch_reader}
+    )()
     jobs = SimpleNamespace(
         latest_validation_id=AsyncMock(return_value=None),
         validation_history=AsyncMock(return_value=[]),
@@ -183,6 +205,25 @@ def test_legacy_factor_reader_remains_compatible(validation_api):
     row = asyncio.run(store.get_factor("factor-a"))
     assert row["factor_name"] == "Example"
     assert row["metadata"]["algorithm"] == "statistical"
+    assert row["factor_revision_no"] == 2
+
+
+def test_batch_reader_keeps_scope_and_source_revisions(validation_api):
+    _, store, _ = validation_api
+    rows = asyncio.run(
+        store.get_factors_by_ids(
+            ["factor-a"], tenant_id="tenant-a", user_id="user-a", include_archived=True
+        )
+    )
+    assert rows[0]["factor_revision_no"] == 2
+    assert (
+        asyncio.run(
+            store.get_factors_by_ids(
+                ["factor-a"], tenant_id="other-tenant", user_id="user-a"
+            )
+        )
+        == []
+    )
 
 
 @pytest.mark.parametrize("scope", [{"tenant_id": "tenant-a"}, {"user_id": "user-a"}])

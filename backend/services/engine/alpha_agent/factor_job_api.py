@@ -74,8 +74,14 @@ async def _factor_input_datasets(
     return list(resolve_datasets(metadata.get("datasets")))
 
 
-def _factor_job_kind(factor_code: str, alpha_router) -> str:
+def _factor_job_kind(factor_code: str, alpha_router, metadata=None) -> str:
     """Validate a durable-job factor entrypoint without executing user code."""
+    from backend.services.engine.alpha_agent.statistical.materialization import (
+        trusted_statistical_candidate,
+    )
+
+    if trusted_statistical_candidate(metadata, factor_code) is not None:
+        return "qlib_expression"
     if factor_code.startswith("fm:"):
         from backend.services.engine.alpha_agent.factorminer.dsl import parse
 
@@ -469,7 +475,7 @@ async def submit_factor_backtest(
     if len(factor_code.encode("utf-8")) > 256 * 1024:
         raise HTTPException(status_code=413, detail="Factor code exceeds 256 KiB")
     try:
-        kind = _factor_job_kind(factor_code, alpha_router)
+        kind = _factor_job_kind(factor_code, alpha_router, factor.get("metadata"))
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if kind == "unknown":
@@ -548,6 +554,11 @@ async def submit_factor_backtest(
         "data_source": payload.data_source,
         "cost_model": _cost_snapshot(),
     }
+    if kind == "qlib_expression":
+        request_snapshot.update(
+            statistical_candidate_key=factor["metadata"]["candidate_key"],
+            statistical_evidence=factor["metadata"].get("evidence"),
+        )
     if validation_context is not None:
         request_snapshot["validation_context"] = validation_context
     try:
@@ -1257,7 +1268,9 @@ async def submit_factor_batch(
             if len(factor_code.encode("utf-8")) > 256 * 1024:
                 raise ValueError("A selected factor exceeds 256 KiB")
             try:
-                factor_kind = _factor_job_kind(factor_code, alpha_router)
+                factor_kind = _factor_job_kind(
+                    factor_code, alpha_router, factor.get("metadata")
+                )
             except Exception as exc:
                 raise ValueError("A selected factor code is invalid") from exc
             if factor_kind == "unknown":
@@ -1285,6 +1298,11 @@ async def submit_factor_batch(
             }
             if payload.kind == "validate":
                 item["validation_context"] = _validation_context(factor, start, end)
+            if factor_kind == "qlib_expression":
+                item.update(
+                    statistical_candidate_key=factor["metadata"]["candidate_key"],
+                    statistical_evidence=factor["metadata"].get("evidence"),
+                )
             factor_items.append(item)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1649,9 +1667,7 @@ async def delete_factor_job(job_id: str, request: Request) -> dict:
             status_code=409, detail="该任务仍在运行，请先取消再清除"
         ) from exc
     except FactorJobProtected as exc:
-        raise HTTPException(
-            status_code=409, detail="只支持清除回测与验证记录"
-        ) from exc
+        raise HTTPException(status_code=409, detail="只支持清除回测与验证记录") from exc
     if deleted_status is None:
         raise HTTPException(status_code=404, detail="Factor job not found")
     logger.info(

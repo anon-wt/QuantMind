@@ -541,19 +541,23 @@ class RDAgentFactorPersistence:
         Legacy callers still authorize their unscoped lookup separately. Durable
         factor jobs pass verified identity and require filtering in the query.
         """
-        conditions = ["factor_id = :factor_id"]
+        conditions = ["factor.factor_id = :factor_id"]
         params = {"factor_id": factor_id}
         if tenant_id is not None or user_id is not None:
             owner = OwnerScope(tenant_id, user_id)
-            conditions.extend(("tenant_id = :tenant_id", "user_id = :user_id"))
+            conditions.extend(("factor.tenant_id = :tenant_id", "factor.user_id = :user_id"))
             params.update(owner.sql_params())
         async with get_session(read_only=True) as session:
             row = await session.execute(
                 text(f"""
-                    SELECT factor_id, factor_name, factor_code, status, ic_value, sharpe_ratio,
+                    SELECT factor.factor_id, factor_name, factor.factor_code, status, ic_value, sharpe_ratio,
                            annual_return, max_drawdown, rank_ic, tenant_id, user_id, market, universe,
-                           factor_formulation, data_source, date_range, metadata_json, created_at, updated_at
-                    FROM rd_agent_factors
+                           factor_formulation, data_source, date_range, metadata_json, created_at, updated_at, archived_at,
+                           (SELECT MAX(revision.revision_no) FROM rd_agent_factor_revisions AS revision
+                            WHERE revision.factor_id=factor.factor_id
+                              AND revision.tenant_id=factor.tenant_id AND revision.user_id=factor.user_id
+                              AND revision.factor_code=factor.factor_code) AS factor_revision_no
+                    FROM rd_agent_factors AS factor
                     WHERE {' AND '.join(conditions)}
                     """),
                 params,
@@ -573,6 +577,24 @@ class RDAgentFactorPersistence:
             else:
                 item["metadata"] = {}
             return item
+
+    async def get_factors_by_ids(
+        self, factor_ids: list[str], *, tenant_id: str, user_id: str,
+        include_archived: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Read a bounded, ordered batch in the verified owner's scope."""
+        owner = OwnerScope(tenant_id, user_id)
+        if (not isinstance(factor_ids, list) or len(factor_ids) > 100
+                or any(not isinstance(value, str) or not value or len(value) > 256
+                       for value in factor_ids)
+                or len(set(factor_ids)) != len(factor_ids)):
+            raise ValueError("Invalid factor selection")
+        rows = []
+        for factor_id in factor_ids:
+            row = await self.get_factor(factor_id, **owner.sql_params())
+            if row is not None and (include_archived or row.get("archived_at") is None):
+                rows.append(row)
+        return rows
 
     async def update_factor_metrics(
         self,

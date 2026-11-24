@@ -202,31 +202,37 @@ def _is_local_cleanup(
         )
     ):
         return False
+    allowed = (
+        {"pool_research", "purge", "purge_task"}
+        if finished_only
+        else {
+            "cleanup",
+            "recovery",
+            "pool_research",
+            "purge",
+            "purge_task",
+            "materialize",
+            "serve_features",
+        }
+    )
+    if executor.get("trusted_catalogue") is True:
+        allowed |= {"backtest", "validate"}
     with budget.store.session_factory() as session:
-        return session.execute(
-            text(
-                "SELECT kind FROM alpha_factor_jobs WHERE tenant_id=:tenant "
-                "AND user_id=:user AND job_id=:job AND execution_generation=:generation "
-                "AND status IN ('running','stopping')"
-            ),
-            {
-                "tenant": candidate["tenant_id"],
-                "user": candidate["user_id"],
-                "job": candidate["task_id"],
-                "generation": executor.get("execution_generation"),
-            },
-        ).scalar_one_or_none() in (
-            {"pool_research", "purge", "purge_task"}
-            if finished_only
-            else {
-                "cleanup",
-                "recovery",
-                "pool_research",
-                "purge",
-                "purge_task",
-                "materialize",
-                "serve_features",
-            }
+        return (
+            session.execute(
+                text(
+                    "SELECT kind FROM alpha_factor_jobs WHERE tenant_id=:tenant "
+                    "AND user_id=:user AND job_id=:job AND execution_generation=:generation "
+                    "AND status IN ('running','stopping')"
+                ),
+                {
+                    "tenant": candidate["tenant_id"],
+                    "user": candidate["user_id"],
+                    "job": candidate["task_id"],
+                    "generation": executor.get("execution_generation"),
+                },
+            ).scalar_one_or_none()
+            in allowed
         )
 
 
@@ -299,7 +305,7 @@ def reconcile_orphaned_factor_jobs(client: Any) -> int:
                         "AND tenant_id=:tenant AND user_id=:user "
                         "AND execution_generation=:generation "
                         "AND status IN ('running','stopping')"
-                        " AND (NOT :cleanup OR kind IN ('cleanup','recovery','pool_research','purge','purge_task','materialize','serve_features'))"
+                        " AND (NOT :cleanup OR kind IN ('cleanup','recovery','pool_research','purge','purge_task','materialize','serve_features','backtest','validate'))"
                     ),
                     {
                         "status": status,

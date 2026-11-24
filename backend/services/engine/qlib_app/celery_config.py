@@ -161,6 +161,11 @@ if os.getenv("MARKET_SYNC_SCHEDULE_ENABLED", "true").lower() == "true":
     }
 
 # Strategy Lab daily scan — 工作日盘后 20:00。
+beat_schedule["factor-job-outbox"] = {
+    "task": "engine.tasks.dispatch_factor_job_outbox",
+    "schedule": 5.0,
+}
+
 # 原为 23:00：一是与每日 00:00 的自动强制更新（会 --force-recreate celery-worker）
 # 撞车，扫描未跑完会被打断；二是 23:00 并不在数据同步之后 —— 同步时刻由用户在前端
 # 「同步调度」配置，建议区间是次日 01:00-06:00，所以两种时刻读到的都是前一交易日
@@ -236,6 +241,7 @@ celery_app.conf.update(
     imports=(
         "backend.services.engine.qlib_app.tasks",
         "backend.services.engine.tasks.celery_tasks",
+        "backend.services.engine.alpha_agent.factor_job_tasks",
     ),
     # 监控配置
     worker_send_task_events=True,

@@ -230,7 +230,23 @@ def execute_factor_backtest(
         panel_fetch_start,
     )
 
-    contract = None if is_factorminer else panel_contract(factor_code)
+    candidate = None
+    if request.get("factor_kind") == "qlib_expression":
+        from .statistical.materialization import trusted_statistical_candidate
+
+        candidate = trusted_statistical_candidate(
+            {
+                "algorithm": "statistical",
+                "candidate_key": request.get("statistical_candidate_key"),
+                "evidence": request.get("statistical_evidence"),
+            },
+            factor_code,
+        )
+        if candidate is None:
+            raise ValueError("Statistical factor expression is not trusted")
+    contract = (
+        None if is_factorminer or candidate is not None else panel_contract(factor_code)
+    )
     if is_factorminer:
         if data_source != "qlib_bin":
             raise ValueError("FactorMiner expressions require the Qlib data source")
@@ -241,6 +257,9 @@ def execute_factor_backtest(
 
         fm_warmup = min_history(parse(factor_code[3:]))
         kind = "factor_miner"
+    elif candidate is not None:
+        fm_warmup = candidate.min_history
+        kind = "qlib_expression"
     else:
         fm_warmup = 0
         kind = alpha_router._detect_factor_kind(factor_code)
@@ -308,7 +327,7 @@ def execute_factor_backtest(
     )
 
     provider_uri = resolve_qlib_provider_uri("CN")
-    qlib.init(provider_uri=provider_uri, region="cn")
+    qlib.init(provider_uri=provider_uri, region="cn", kernels=1)
     frozen_symbols = request.get("universe_symbols")
     if frozen_symbols is not None:
         if (
@@ -334,7 +353,7 @@ def execute_factor_backtest(
     fetch_start = start
     if contract is not None:
         fetch_start = panel_fetch_start(start, contract["warmup_bars"], D)
-    elif is_factorminer and fm_warmup:
+    elif (is_factorminer or candidate is not None) and fm_warmup:
         import pandas as pd
 
         calendar_start = (
@@ -354,7 +373,12 @@ def execute_factor_backtest(
             "%Y-%m-%d"
         )
     qlib_fields = ["$open", "$high", "$low", "$close", "$volume", "$factor"]
-    if is_factorminer or contract is not None or "quantdb_data" in factor_code:
+    if (
+        is_factorminer
+        or candidate is not None
+        or contract is not None
+        or "quantdb_data" in factor_code
+    ):
         qlib_fields.append("$amount")
     frame = D.features(
         instruments,
@@ -369,17 +393,33 @@ def execute_factor_backtest(
         frame = enrich_panel(frame, contract)
     evidence = input_evidence(frame, contract) if contract is not None else None
     progress({"stage": "factor_eval", "progress_pct": 45})
-    values = run_factor_series(
-        factor_code,
-        frame,
-        tenant_id=tenant_id,
-        user_id=user_id,
-        datasets=request.get("datasets"),
-        lease=lease,
-        budget=budget,
-        lifecycle=lifecycle,
-    )
-    if (is_factorminer or contract is not None) and fetch_start != start:
+    if candidate is not None:
+        # Only the exact built-in catalogue reaches this path; user code retains
+        # its Docker boundary. No expression eval or user imports occur here.
+        values = np.full(len(frame), np.nan)
+        for positions in frame.groupby(level=0, sort=False).indices.values():
+            part = frame.iloc[positions].droplevel(0)
+            part = part.rename(
+                columns={
+                    f"${name}": name
+                    for name in ("open", "high", "low", "close", "volume", "amount")
+                }
+            )
+            values[positions] = candidate.compute(part).reindex(part.index).to_numpy()
+    else:
+        values = run_factor_series(
+            factor_code,
+            frame,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            datasets=request.get("datasets"),
+            lease=lease,
+            budget=budget,
+            lifecycle=lifecycle,
+        )
+    if (
+        is_factorminer or candidate is not None or contract is not None
+    ) and fetch_start != start:
         dates = pd.to_datetime(frame.index.get_level_values(1))
         in_window = (dates >= pd.Timestamp(start)) & (dates <= pd.Timestamp(end))
         frame = frame.iloc[in_window]
@@ -402,7 +442,7 @@ def execute_factor_backtest(
         raise RuntimeError("Fewer than 100 finite factor/return observations remain")
     factor_values = factor_values.iloc[np.flatnonzero(valid)]
     return_values = return_values.iloc[np.flatnonzero(valid)]
-    ic_mean, rank_ic_median, icir, observations = (
+    ic_mean, rank_ic_median, icir, rank_icir, observations = (
         alpha_router._vectorized_daily_spearman_ic(factor_values, return_values)
     )
     if observations <= 0:
@@ -480,6 +520,7 @@ def execute_factor_backtest(
             "ic_mean": ic_mean,
             "rank_ic_median": rank_ic_median,
             "icir": icir,
+            "rank_icir": rank_icir,
             "sharpe_ratio": sharpe,
             "annual_return": annual_return,
             "max_drawdown": max_drawdown,
