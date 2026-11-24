@@ -79,6 +79,11 @@ def test_catalog_exposes_three_initialization_sources_and_explicit_coverage(api)
     assert [p["source"] for p in data["providers"]] == ["quantdb", "datayes", "doris"]
     assert data["providers"][2]["enabled"] is False
     assert data["providers"][2]["configured"] is False
+    assert data["providers"][0]["dataset_count"] == 26
+    for row in data["datasets"]:
+        if row["dataset"] in {"min1_kline", "min5_kline", "tick_data"}:
+            assert row["sources"] == []
+    assert "SHA256" in data["providers"][0]["sync_hint"]
     assert next(d for d in data["datasets"] if d["dataset"] == "l1_factors")[
         "sources"
     ] == ["quantdb"]
@@ -216,3 +221,52 @@ def test_admin_dependency_protects_configuration_and_start(api):
     assert client.get("/initialization").status_code == 401
     assert client.post("/initialization/jobs", json=request()).status_code == 401
     assert not threads
+
+
+def test_default_quantdb_job_dispatches_only_public_initialization_scope(api, monkeypatch):
+    client, _, threads = api
+    supported = modelscope_dataset_sync.PUBLIC_INITIALIZATION_DATASETS
+    quantdb = MagicMock(return_value={
+        "datasets": {name: {"downloaded": 0, "skipped": 1} for name in supported},
+        "errors": 0,
+    })
+    monkeypatch.setattr(modelscope_dataset_sync, "init_from_modelscope", quantdb)
+    response = client.post("/initialization/jobs", json={"sources": ["quantdb"]})
+    assert response.status_code == 200
+    assert response.json()["data"]["job"]["total"] == 26
+    threads[0]["target"](*threads[0]["args"])
+    assert set(quantdb.call_args.args[0]) == supported
+    job = client.get("/initialization/jobs").json()["data"]["jobs"][0]
+    assert job["status"] == "completed"
+
+
+def test_minute_initialization_is_rejected_before_dispatch(api):
+    client, _, threads = api
+    response = client.post(
+        "/initialization/jobs", json=request(["quantdb"], ["min1_kline"])
+    )
+    assert response.status_code == 400
+    assert "初始化范围" in response.json()["detail"]
+    assert not threads
+
+
+def test_datayes_selected_scope_excludes_quantdb_proprietary_factors(api):
+    client, _, _ = api
+    save_sources("A", {"quantdb": False, "datayes": True})
+    data = client.get("/initialization").json()["data"]
+    enabled = {p["source"] for p in data["providers"] if p["enabled"]}
+    visible = [d for d in data["datasets"] if enabled.intersection(d["sources"])]
+    assert len(visible) == 22
+    assert not any(d["dataset"] == "l1_factors" for d in visible)
+
+
+def test_absent_remote_dataset_returns_actionable_scope_error(api, monkeypatch):
+    client, _, threads = api
+    fetch = MagicMock(side_effect=modelscope_dataset_sync.ModelScopeDatasetUnavailableError(["daily_forward"]))
+    monkeypatch.setattr(modelscope_dataset_sync, "init_from_modelscope", fetch)
+    client.post("/initialization/jobs", json=request(["quantdb"]))
+    threads[0]["target"](*threads[0]["args"])
+    job = client.get("/initialization/jobs").json()["data"]["jobs"][0]
+    assert job["status"] == "failed"
+    assert "日线前复权" in job["results"][0]["error"]
+    assert "调整初始化范围" in job["results"][0]["error"]

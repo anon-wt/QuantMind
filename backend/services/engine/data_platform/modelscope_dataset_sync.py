@@ -12,7 +12,7 @@ parquet 清单（含 sha256 / size），并发流式下载到 ``QM_QUANTDB_DATA_
 设计要点：
   - 只依赖 stdlib + httpx（requirements 已含），不引入 modelscope SDK。
   - 下载走 302 → CDN 签名 URL，httpx 自动跟随重定向。
-  - 全量覆盖：逐文件下载并原地替换（os.replace），与魔搭社区完全对齐。
+  - 文件级增量：跳过校验一致的文件，仅下载缺失或变化项并原子替换（os.replace）。
   - 断点续传：仅当本地存在 + size 一致 + 状态库登记 sha256 == 远端 sha256
     才跳过；否则重下覆盖。每批完成即增量登记状态，中断后重跑只补未完成项。
   - 状态库：用远端 sha256 写 objects（免 56GB 重哈希）。
@@ -34,11 +34,30 @@ from urllib.parse import quote
 
 import httpx
 
+from backend.shared.quantdb_datasets import DATASETS
+
 log = logging.getLogger("modelscope_dataset_sync")
 
 DEFAULT_ENDPOINT = "https://www.modelscope.cn"
 DEFAULT_REPO_ID = "qusong0627/LightGBM_Alpha300"
 DEFAULT_REVISION = "master"
+
+# Public bootstrap coverage differs from the authenticated QuantDB SDK catalog.
+# Keep the SDK's minute/tick capabilities intact; the public repository has daily data.
+PUBLIC_INITIALIZATION_DATASETS = frozenset(
+    spec.dataset
+    for spec in DATASETS
+    if spec.dataset not in {"min1_kline", "min5_kline", "tick_data"}
+)
+
+
+class ModelScopeDatasetUnavailableError(ValueError):
+    """A requested known dataset is absent from the remote public repository."""
+
+    def __init__(self, datasets: list[str]):
+        self.datasets = datasets
+        super().__init__(f"魔搭仓库中不存在这些数据集: {', '.join(datasets)}")
+
 
 TREE_PAGE_SIZE = 1000
 TREE_WORKERS = 6
@@ -539,10 +558,10 @@ def init_from_modelscope(
     progress_cb: Callable[..., None] | None = None,
     should_cancel: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
-    """从魔搭全量拉取 QuantDB 数据并原地覆盖本地目录。
+    """校验魔搭完整清单，只下载缺失或发生变化的文件。
 
-    目标是与魔搭社区数据集完全对齐：不比对、不增量，逐文件下载并覆盖
-    已存在的文件；完成后用远端 sha256 重建同步状态库。
+    已存在且大小、状态库 SHA256 与远端一致的文件跳过；其他文件经
+    SHA256 校验后原子替换。该文件级增量不受日期范围约束。
     datasets: 数据集名列表（DATASETS 规格）；None=仓库内可识别的全部。
     """
     from backend.shared.quantdb_datasets import DATASETS
@@ -570,9 +589,7 @@ def init_from_modelscope(
     if datasets is not None:
         missing = [d for d in datasets if d not in grouped]
         if missing:
-            raise ValueError(
-                f"魔搭仓库中不存在这些数据集: {', '.join(sorted(missing))}"
-            )
+            raise ModelScopeDatasetUnavailableError(sorted(missing))
 
     total_files = sum(len(v) for v in grouped.values())
     total_bytes = sum(f.size for v in grouped.values() for f in v)

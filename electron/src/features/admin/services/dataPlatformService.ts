@@ -135,7 +135,7 @@ export interface DorisConfig {
 }
 export type AShareSource = 'quantdb' | 'datayes' | 'doris';
 export interface AShareInitCatalog {
-    providers: Array<{ source: AShareSource; label: string; enabled: boolean; configured: boolean; root: string; dataset_count: number; local_dataset_count: number }>;
+    providers: Array<{ source: AShareSource; label: string; enabled: boolean; configured: boolean; root: string; dataset_count: number; local_dataset_count: number; scope_hint?: string; sync_hint?: string }>;
     datasets: Array<{ dataset: string; name: string; group: string; sources: AShareSource[]; datayes_note: string; doris_note?: string }>;
     timestamp: string;
 }

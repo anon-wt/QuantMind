@@ -2,7 +2,9 @@
 
 管理后台 → 数据平台 → A 股 → 引导初始化中提供 QuantDB / Datayes 两个勾选项。「本地落盘」保留初始化按钮与 QuantDB 本地扫描。个人中心 → 数据平台并列展示两家的凭据配置。
 
-`/api/v1/admin/data-platform/a-share/initialization` 返回覆盖与本地状态；`POST /initialization/jobs` 按请求中已启用的数据源分发后台任务，`GET /initialization/jobs/{id}` 查询结果，`POST /initialization/jobs/{id}/cancel` 协作取消。请求包含 `sources`、`datasets`、`start_date`、`end_date`。日期范围仅约束 Datayes，默认 2016-01-01 至今天；QuantDB 保留 ModelScope 公共仓库的完整文件初始化及原有因子基线发布。
+`/api/v1/admin/data-platform/a-share/initialization` 返回各源初始化覆盖、本地状态及范围说明；弹窗只展示所选源支持的数据集，多源取并集并逐源执行。`POST /initialization/jobs` 按请求中已启用的数据源分发后台任务，`GET /initialization/jobs/{id}` 查询结果，`POST /initialization/jobs/{id}/cancel` 协作取消。请求包含 `sources`、`datasets`、`start_date`、`end_date`。日期范围约束 Datayes 和 Doris，默认 2016-01-01 至今天。
+
+QuantDB 公开初始化支持 26 类日频、基础、财务及因子数据，不含分钟线和逐笔；完整 SDK 目录仍保留 29 类。公开初始化枚举完整仓库，不按日期裁剪；本地大小与已登记 SHA256 均一致时跳过，只下载缺失或变化的文件，并保留原有因子基线发布。页面结果分别显示下载与跳过文件数。分钟/逐笔等 SDK 增量同步需要 QuantDB Key、网络及对应权限/流量，不能通过公开初始化拉取。
 
 ## Datayes 覆盖
 
@@ -27,7 +29,7 @@
 | valuation | getMktEqud 的 PE（TTM）、PB、市值与换手率；PE1 为动态年化 PE，单独保留 |
 | technical_indicators / features_daily | 前复权 OHLCV 派生 MA、收益率、RSI、MACD，日频特征另合并同日估值；使用历史窗口，缺少足够历史时保留空值 |
 
-分钟、逐笔、市场情绪和 QuantDB 专有 L1 / L1+L2 / 动态因子宽表共 7 项没有可直接对齐的商城接口或相同定义，仅在 QuantDB 源下可选。Datayes 的日频特征是基础行情及估值特征子集，不填造 QuantDB 专有字段；已有模型应核对所需特征是否覆盖。
+分钟、逐笔、市场情绪和 QuantDB 专有 L1 / L1+L2 / 动态因子宽表共 7 项没有可直接对齐的商城接口或相同定义。市场情绪及专有因子可从 QuantDB 公开初始化获取；分钟及逐笔另走 SDK 同步。Datayes 的日频特征是基础行情及估值特征子集，不填造 QuantDB 专有字段；已有模型应核对所需特征是否覆盖。
 
 股票通过 `StockCodeUtil.from_datayes` 转换为后缀式，成交量保持股、金额和市值保持元。指数权重由百分数转成比例，同时保留 `weight_pct`。财务保留原始字段、`m_anntime`（披露日）和 `m_timetag`（报告期）；ETF 不合并掉各成分券。
 

@@ -28,6 +28,7 @@ export function AShareInitialization({ onScan, onInitialized }: { onScan: () => 
   const providers = catalog?.providers ?? [];
   const enabled = providers.filter((provider) => provider.enabled);
   const sources = enabled.map((provider) => provider.source);
+  const availableDatasets = (catalog?.datasets ?? []).filter((row) => row.sources.some((source) => sources.includes(source)));
   const hasDatayes = sources.includes('datayes');
   const hasDoris = sources.includes('doris');
   const missingToken = enabled.some((provider) => !provider.configured);
@@ -90,7 +91,7 @@ export function AShareInitialization({ onScan, onInitialized }: { onScan: () => 
 
   const openInitialization = () => {
     if (!running) {
-      setSelected((catalog?.datasets ?? []).filter((row) => row.sources.some((source) => sources.includes(source))).map((row) => row.dataset));
+      setSelected(availableDatasets.map((row) => row.dataset));
     }
     setOpen(true);
   };
@@ -126,9 +127,10 @@ export function AShareInitialization({ onScan, onInitialized }: { onScan: () => 
   };
 
   const resultRows = (job?.results ?? []).flatMap((result) => {
-    if (Array.isArray(result.datasets)) return result.datasets.map((item) => ({ ...item, source: result.source }));
+    if (Array.isArray(result.datasets)) return result.datasets.map((item) => ({ ...item, source: result.source, summary: `同步 ${item.rows ?? 0} 行` }));
     return Object.entries(result.datasets ?? {}).map(([dataset, item]) => ({
       dataset, source: result.source, status: item.errors ? 'failed' : 'completed', rows: item.downloaded ?? 0,
+      summary: `下载 ${item.downloaded ?? 0} 个文件，跳过 ${item.skipped ?? 0} 个文件`,
       error: item.errors ? `${item.errors} 个文件失败` : undefined,
     }));
   });
@@ -185,16 +187,24 @@ export function AShareInitialization({ onScan, onInitialized }: { onScan: () => 
           <Button type="primary" loading={starting} disabled={running || missingToken || !selected.length || !sources.length} onClick={() => void start()}>开始初始化</Button></Space>}>
         <Space direction="vertical" className="w-full" size="middle">
           {tokenNotice}
-          {sources.includes('quantdb') && <Alert type="info" showIcon message="QuantDB 从魔搭同步全量数据，免 API Key 和 QuantDB 流量；支持完整文件续传。" />}
+          <div className="rounded-xl border border-slate-200 p-3 space-y-3" aria-label="当前初始化范围">
+            <Typography.Text strong>当前初始化范围：{availableDatasets.length} 类数据集，已选择 {selected.filter((name) => availableDatasets.some((row) => row.dataset === name)).length} 类</Typography.Text>
+            {enabled.map((provider) => <div key={provider.source} className="space-y-1">
+              <div><Tag>{SOURCE_LABELS[provider.source]}</Tag><Typography.Text>将同步 {availableDatasets.filter((row) => selected.includes(row.dataset) && row.sources.includes(provider.source)).length}/{provider.dataset_count} 类数据集</Typography.Text></div>
+              <div className="text-xs text-slate-600">{provider.scope_hint}</div>
+              <div className="text-xs text-slate-500">{provider.sync_hint}</div>
+            </div>)}
+          </div>
+          {sources.includes('quantdb') && <Alert type="info" showIcon message="QuantDB 公开初始化免 API Key 和 QuantDB 流量；分钟线与逐笔数据不在公开初始化范围内，需通过 SDK 同步。" />}
           {hasDatayes && <>
-            <Alert type="info" showIcon message="Datayes 按所选日期同步商城可映射数据集，并生成技术指标及基础日频特征；数据权限和调用额度以订阅为准。分钟、逐笔及 QuantDB 专有因子需使用 QuantDB。" />
+            <Alert type="info" showIcon message="Datayes 按所选日期同步商城可映射数据集，并生成技术指标及基础日频特征；数据权限和调用额度以订阅为准。QuantDB 专有因子需从 QuantDB 初始化；分钟和逐笔不在本页初始化范围内。" />
             <Typography.Text type="secondary" className="text-xs">会一并同步股票资料、交易日历和派生数据所需的日线、估值；分批安全写入，可取消任务。</Typography.Text>
           </>}
           {hasDoris && <Alert type="info" showIcon message="Doris 只读查询映射表，写入独立本地 Parquet。增量同步从上次成功日期回看已配置的天数；历史修订超出回看范围时，可关闭增量并重取指定区间。" />}
           {(hasDatayes || hasDoris) && <Space wrap><span>同步范围</span><Input aria-label="同步开始日期" type="date" value={startDate} min="1990-01-01" max={endDate} disabled={running} onChange={(event) => setStartDate(event.target.value)} />
             <span>至</span><Input aria-label="同步结束日期" type="date" value={endDate} min={startDate} max={dayjs().format('YYYY-MM-DD')} disabled={running} onChange={(event) => setEndDate(event.target.value)} /></Space>}
           {hasDoris && <Checkbox checked={incremental} disabled={running} onChange={(event) => setIncremental(event.target.checked)}>Doris 按本地成功进度增量同步</Checkbox>}
-          <Table size="small" pagination={false} rowKey="dataset" dataSource={catalog?.datasets ?? []}
+          <Table size="small" pagination={false} rowKey="dataset" dataSource={availableDatasets}
             rowSelection={{ selectedRowKeys: selected, onChange: (keys) => setSelected(keys as string[]), getCheckboxProps: (row) => ({ disabled: running || !row.sources.some((source) => sources.includes(source)) }) }}
             columns={[
               { title: '数据集', dataIndex: 'name' },
@@ -211,7 +221,7 @@ export function AShareInitialization({ onScan, onInitialized }: { onScan: () => 
             {job.results.filter((result) => result.error).map((result) => <Alert key={result.source} type="error" message={result.error} />)}
             {job.results.filter((result) => (result.skipped_stock_rows ?? 0) > 0).map((result) => <Alert key={`${result.source}-skipped`} type="warning" showIcon message={`${SOURCE_LABELS[result.source]} 已跳过 ${result.skipped_stock_rows} 条无法识别的证券记录，请核对源表编码。`} />)}
             {resultRows.length > 0 && <Table size="small" pagination={false} rowKey={(row) => `${row.source}:${row.dataset}`} dataSource={resultRows}
-              columns={[{ title: '数据源', dataIndex: 'source' }, { title: '数据集', dataIndex: 'dataset' }, { title: '结果', render: (_, row) => <Tag color={row.status === 'failed' ? 'error' : row.status === 'empty' ? 'default' : 'success'}>{row.status === 'failed' ? '失败' : row.status === 'empty' ? '无数据' : '已同步'}</Tag> }, { title: '说明', dataIndex: 'error' }]} />}
+              columns={[{ title: '数据源', dataIndex: 'source' }, { title: '数据集', dataIndex: 'dataset' }, { title: '结果', render: (_, row) => <Tag color={row.status === 'failed' ? 'error' : row.status === 'empty' ? 'default' : 'success'}>{row.status === 'failed' ? '失败' : row.status === 'empty' ? '无数据' : '已同步'}</Tag> }, { title: '说明', render: (_, row) => row.error || row.summary }]} />}
           </div>}
         </Space>
       </Modal>

@@ -15,6 +15,10 @@ from pydantic import BaseModel, Field
 
 from backend.services.api.user_app.middleware.auth import require_admin
 from backend.services.engine.data_platform import datayes_sync, doris_source
+from backend.services.engine.data_platform.modelscope_dataset_sync import (
+    PUBLIC_INITIALIZATION_DATASETS,
+    ModelScopeDatasetUnavailableError,
+)
 from backend.shared.data_source_config import list_sources
 from backend.shared.quantdb_datasets import DATASETS
 from backend.shared.runtime_secrets import get_secret
@@ -24,6 +28,20 @@ log = logging.getLogger(__name__)
 _jobs: dict[str, dict] = {}
 _lock = threading.RLock()
 _all = {spec.dataset for spec in DATASETS}
+_source_scope = {
+    "quantdb": {
+        "scope_hint": "公开仓库完整历史，不受下方日期范围约束；不含分钟线和逐笔数据。",
+        "sync_hint": "按文件增量校验：跳过本地大小和已登记 SHA256 均一致的文件，只下载缺失或变化文件。",
+    },
+    "datayes": {
+        "scope_hint": "按所选起止日期同步商城可映射数据，实际范围以订阅权限为准。",
+        "sync_hint": "重取所选日期区间并合并本地历史；自动补充股票资料、交易日历和派生数据依赖。",
+    },
+    "doris": {
+        "scope_hint": "按已保存表及字段映射、所选起止日期同步。",
+        "sync_hint": "可按本地成功进度和回看窗口增量同步；关闭增量时重取指定区间。",
+    },
+}
 
 
 def _now():
@@ -53,7 +71,7 @@ def _catalog():
     providers = []
     doris_supported = doris_source.supported_datasets()
     for name, label, root, supported in (
-        ("quantdb", "QuantDB", resolve_data_root(), _all),
+        ("quantdb", "QuantDB", resolve_data_root(), PUBLIC_INITIALIZATION_DATASETS),
         (
             "datayes",
             "Datayes 通联数据",
@@ -82,6 +100,7 @@ def _catalog():
                 ),
                 "dataset_count": len(supported),
                 "local_dataset_count": local,
+                **_source_scope[name],
             }
         )
     return {
@@ -91,7 +110,7 @@ def _catalog():
                 "dataset": spec.dataset,
                 "name": spec.name,
                 "group": spec.group,
-                "sources": ["quantdb"]
+                "sources": (["quantdb"] if spec.dataset in PUBLIC_INITIALIZATION_DATASETS else [])
                 + (["datayes"] if spec.dataset in datayes_sync.SUPPORTED else [])
                 + (["doris"] if spec.dataset in doris_supported else []),
                 "doris_note": "按已保存的 Doris 表映射同步；因子字段保留原始定义"
@@ -128,7 +147,7 @@ def _plan(source, requested):
         requested if requested is not None else [spec.dataset for spec in DATASETS]
     )
     supported = (
-        _all if source == "quantdb" else
+        PUBLIC_INITIALIZATION_DATASETS if source == "quantdb" else
         doris_source.supported_datasets() if source == "doris" else datayes_sync.SUPPORTED
     )
     selected = list(dict.fromkeys(name for name in selected if name in supported))
@@ -191,6 +210,13 @@ def _run(job_id: str, payload: InitializationRequest):
                         should_cancel=cancelled,
                     )
                 results.append({"source": source, **summary})
+            except ModelScopeDatasetUnavailableError as exc:
+                names = [spec.name for spec in DATASETS if spec.dataset in exc.datasets]
+                results.append({
+                    "source": source,
+                    "errors": 1,
+                    "error": f"QuantDB 公开初始化仓库未提供：{'、'.join(names)}。请调整初始化范围后重试。",
+                })
             except Exception:
                 log.exception("A 股 %s 初始化失败", source)
                 # 上游异常/请求对象可能含访问凭据，接口只回传稳定的错误文案。
@@ -260,12 +286,12 @@ async def start_initialization(
         ):
             raise HTTPException(400, "所选数据集包含 Datayes 暂不支持的专有数据")
         supported = set().union(*(
-            _all if source == "quantdb" else doris_source.supported_datasets()
+            PUBLIC_INITIALIZATION_DATASETS if source == "quantdb" else doris_source.supported_datasets()
             if source == "doris" else datayes_sync.SUPPORTED
             for source in payload.sources
         ))
         if set(payload.datasets) - supported:
-            raise HTTPException(400, "所选数据集缺少可用数据源或 Doris 表映射")
+            raise HTTPException(400, "所选数据集不在当前数据源的初始化范围内，请刷新范围后重试；分钟和逐笔数据需使用 QuantDB SDK 同步")
     with _lock:
         if any(job["status"] in ("running", "cancelling") for job in _jobs.values()):
             raise HTTPException(409, "已有 A 股初始化任务正在执行")
