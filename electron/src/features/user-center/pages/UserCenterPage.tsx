@@ -13,6 +13,7 @@ import { SecuritySettings } from '../components/SecuritySettings';
 import CloudStrategyManagement from '../components/CloudStrategyManagement';
 import CloudNodeSettings from '../components/CloudNodeSettings';
 import QuantDBSettings from '../components/QuantDBSettings';
+import DorisSettings from '../components/DorisSettings';
 import DatayesSettings from '../components/DatayesSettings';
 import OtherSettings from '../components/OtherSettings';
 import defaultLogo from '../../../assets/logo.png';
@@ -219,7 +220,7 @@ const UserCenterPage: React.FC = () => {
                 数据平台
               </span>
             ),
-            children: wrapTabContent(<div className="space-y-6"><QuantDBSettings /><DatayesSettings /></div>),
+            children: wrapTabContent(<div className="space-y-6"><QuantDBSettings /><DatayesSettings /><DorisSettings /></div>),
           },
         ]
       : []),

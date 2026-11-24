@@ -63,6 +63,15 @@ def resolve_qlib_provider_uri(market: str = "CN") -> str:
         return env_val
 
     market_upper = market.upper()
+    if market_upper == "CN":
+        from backend.services.engine.data_platform.a_share_sources import (
+            read_data_root,
+            selected_source,
+        )
+
+        if selected_source() == "doris":
+            # Doris 的派生缓存随数据目录隔离，切换数据源时不能继续读 QuantDB 缓存。
+            return str(read_data_root() / ".qlib_cache" / "cn_data")
 
     # 非 A 股市场：固定子目录
     _MARKET_SUBDIR: dict[str, str] = {

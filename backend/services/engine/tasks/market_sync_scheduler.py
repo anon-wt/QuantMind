@@ -135,6 +135,23 @@ def run_market_sync(market: str, cfg: dict[str, Any]) -> dict[str, Any]:
     result: dict[str, Any] = {"market": market, "started": datetime.now().isoformat()}
 
     if market == "A":
+        from backend.services.engine.data_platform.a_share_sources import selected_source
+
+        if selected_source() == "doris":
+            from datetime import date, timedelta
+            from backend.services.engine.data_platform import doris_source
+
+            result["result"] = doris_source.sync_doris(
+                datasets or sorted(doris_source.supported_datasets()),
+                date.today() - timedelta(days=max(1, days) - 1), date.today(),
+            )
+            if result["result"]["errors"]:
+                raise RuntimeError("Doris 定时同步部分失败，请检查表映射与数据覆盖")
+            if with_qlib:
+                from backend.services.engine.qlib_data_builder import ensure_qlib_cache
+                result["qlib"] = {"provider_uri": ensure_qlib_cache("CN")}
+            return result
+
         from backend.scripts.quantdb_daily_sync import run_daily_sync
 
         # 不跳过 PG：QuantDB 同步完成后滚动刷新 stock_daily_latest 最近 N 天

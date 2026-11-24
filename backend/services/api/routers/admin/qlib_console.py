@@ -113,9 +113,9 @@ def _resolve_cn_qlib_dir() -> Path:
 
 def _latest_parquet_date() -> str | None:
     """daily_forward 最新分区日期（YYYYMMDD）。"""
-    from backend.scripts.quantdb_daily_sync import QUANTDB_DATA_DIR
+    from backend.services.engine.data_platform.a_share_sources import read_data_root
 
-    fwd = QUANTDB_DATA_DIR / "1_kline_data" / "daily_forward"
+    fwd = read_data_root() / "1_kline_data" / "daily_forward"
     if not fwd.is_dir():
         return None
     parts = [p.name for p in fwd.glob("dt=*")]

@@ -64,10 +64,18 @@ export const AdminQuantDBPanel: React.FC = () => {
         setCatalogRefreshSignal(refreshCounter.current);
     }, []);
     const [scanOpen, setScanOpen] = useState(false);
+    const [provider, setProvider] = useState('quantdb');
 
     const loadInfo = useCallback(async () => {
         setLoading(true);
         try {
+            const catalog = await dataPlatformService.getAShareInitCatalog();
+            const selected = catalog.providers.find((item) => item.enabled)?.source ?? 'quantdb';
+            setProvider(selected);
+            if (selected === 'doris') {
+                setInfo(null);
+                return;
+            }
             const resp = await dataPlatformService.getQuantDBInfo();
             setInfo(resp.quantdb);
         } catch (error: unknown) {
@@ -79,7 +87,7 @@ export const AdminQuantDBPanel: React.FC = () => {
 
     useEffect(() => {
         loadInfo();
-    }, [loadInfo]);
+    }, [loadInfo, catalogRefreshSignal]);
 
     const usage = info?.usage;
     const hasSplit = usage !== undefined
@@ -104,13 +112,13 @@ export const AdminQuantDBPanel: React.FC = () => {
             <SectionCard
                 index="02"
                 title="数据更新"
-                desc="QuantDB 状态与流量 · 数据集检查更新与增量同步"
+                desc={provider === 'doris' ? 'Doris 本地数据集 · 按已保存映射增量同步' : 'QuantDB 状态与流量 · 数据集检查更新与增量同步'}
                 icon={<CloudSyncOutlined />}
                 tone="blue"
                 extra={
                     <Space size="small">
-                        <Tag color={info?.connected ? 'green' : 'red'} className="m-0 rounded-full px-2.5 font-bold border-none">
-                            {info?.connected ? '已连接' : '未连接'}
+                        <Tag color={provider === 'doris' ? 'blue' : info?.connected ? 'green' : 'red'} className="m-0 rounded-full px-2.5 font-bold border-none">
+                            {provider === 'doris' ? 'Doris 本地数据' : info?.connected ? '已连接' : '未连接'}
                         </Tag>
                         <Button size="small" icon={<ReloadOutlined />} loading={loading} onClick={() => { loadInfo(); }} className="rounded-lg">
                             刷新
@@ -118,6 +126,7 @@ export const AdminQuantDBPanel: React.FC = () => {
                     </Space>
                 }
             >
+                <div hidden={provider === 'doris'}>
                 {info?.error && <Alert type="error" message={info.error} className="mb-4 rounded-xl" showIcon />}
 
                 {/* 状态行 */}
@@ -203,8 +212,9 @@ export const AdminQuantDBPanel: React.FC = () => {
                     </div>
                 )}
 
+                </div>
                 <QuantDBCatalogPanel
-                    connected={Boolean(info?.connected)}
+                    connected={provider === 'doris' || Boolean(info?.connected)}
                     onPreview={setPreviewDataset}
                     refreshSignal={catalogRefreshSignal}
                     embedded

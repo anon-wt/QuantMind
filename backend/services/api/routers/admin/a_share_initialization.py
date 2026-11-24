@@ -1,4 +1,4 @@
-"""A 股引导初始化：按已保存的数据源配置分发 QuantDB / Datayes 任务。"""
+"""A 股引导初始化：按已保存的数据源配置分发 QuantDB / Datayes / Doris 任务。"""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from backend.services.api.user_app.middleware.auth import require_admin
-from backend.services.engine.data_platform import datayes_sync
+from backend.services.engine.data_platform import datayes_sync, doris_source
 from backend.shared.data_source_config import list_sources
 from backend.shared.quantdb_datasets import DATASETS
 from backend.shared.runtime_secrets import get_secret
@@ -35,12 +35,13 @@ def _payload(data):
 
 
 class InitializationRequest(BaseModel):
-    sources: list[Literal["quantdb", "datayes"]] = Field(
-        ..., min_length=1, max_length=2
+    sources: list[Literal["quantdb", "datayes", "doris"]] = Field(
+        ..., min_length=1, max_length=3
     )
     datasets: list[str] | None = None
     start_date: date = date(2016, 1, 1)
     end_date: date = Field(default_factory=date.today)
+    incremental: bool = True
 
 
 def _catalog():
@@ -50,6 +51,7 @@ def _catalog():
 
     sources = {row["source"]: row for row in list_sources("A")}
     providers = []
+    doris_supported = doris_source.supported_datasets()
     for name, label, root, supported in (
         ("quantdb", "QuantDB", resolve_data_root(), _all),
         (
@@ -58,6 +60,7 @@ def _catalog():
             datayes_sync.data_root(),
             datayes_sync.SUPPORTED,
         ),
+        ("doris", "Doris 数据库", doris_source.data_root(), doris_supported),
     ):
         local = 0
         for spec in DATASETS:
@@ -74,7 +77,9 @@ def _catalog():
                 "label": label,
                 "root": str(root),
                 "enabled": sources[name]["enabled"],
-                "configured": name == "quantdb" or bool(get_secret("DATAYES_TOKEN")),
+                "configured": name == "quantdb" or (
+                    bool(doris_supported) if name == "doris" else bool(get_secret("DATAYES_TOKEN"))
+                ),
                 "dataset_count": len(supported),
                 "local_dataset_count": local,
             }
@@ -87,7 +92,10 @@ def _catalog():
                 "name": spec.name,
                 "group": spec.group,
                 "sources": ["quantdb"]
-                + (["datayes"] if spec.dataset in datayes_sync.SUPPORTED else []),
+                + (["datayes"] if spec.dataset in datayes_sync.SUPPORTED else [])
+                + (["doris"] if spec.dataset in doris_supported else []),
+                "doris_note": "按已保存的 Doris 表映射同步；因子字段保留原始定义"
+                if spec.dataset in doris_supported else "请先发现并保存对应表映射",
                 "datayes_note": "由行情与估值派生（不含 QuantDB 专有因子）"
                 if spec.dataset in datayes_sync.DERIVED
                 else (
@@ -116,13 +124,14 @@ def _plan(source, requested):
     selected = (
         requested if requested is not None else [spec.dataset for spec in DATASETS]
     )
-    supported = _all if source == "quantdb" else datayes_sync.SUPPORTED
-    selected = list(dict.fromkeys(name for name in selected if name in supported))
-    return (
-        datayes_sync.plan_datasets(selected)
-        if source == "datayes" and selected
-        else selected
+    supported = (
+        _all if source == "quantdb" else
+        doris_source.supported_datasets() if source == "doris" else datayes_sync.SUPPORTED
     )
+    selected = list(dict.fromkeys(name for name in selected if name in supported))
+    if source == "doris" and selected:
+        return doris_source.plan_datasets(selected)
+    return datayes_sync.plan_datasets(selected) if source == "datayes" and selected else selected
 
 
 def _run(job_id: str, payload: InitializationRequest):
@@ -165,6 +174,11 @@ def _run(job_id: str, payload: InitializationRequest):
                         for name in missing:
                             summary.setdefault("datasets", {})[name] = {"errors": 1}
                         summary["errors"] = summary.get("errors", 0) + len(missing)
+                elif source == "doris":
+                    summary = doris_source.sync_doris(
+                        selected, payload.start_date, payload.end_date,
+                        incremental=payload.incremental, progress=progress, should_cancel=cancelled,
+                    )
                 else:
                     summary = datayes_sync.sync_datayes(
                         selected,
@@ -232,6 +246,8 @@ async def start_initialization(
         raise HTTPException(409, "数据源选择已变化，请刷新后重新选择")
     if "datayes" in payload.sources and not get_secret("DATAYES_TOKEN"):
         raise HTTPException(400, "请先到个人中心 → 数据平台配置 Datayes Token")
+    if "doris" in payload.sources and not doris_source.supported_datasets():
+        raise HTTPException(400, "请先到个人中心 → 数据平台配置 Doris 并保存表映射")
     if payload.datasets is not None:
         if not payload.datasets or set(payload.datasets) - _all:
             raise HTTPException(400, "请选择有效的数据集")
@@ -240,6 +256,13 @@ async def start_initialization(
             and set(payload.datasets) - datayes_sync.SUPPORTED
         ):
             raise HTTPException(400, "所选数据集包含 Datayes 暂不支持的专有数据")
+        supported = set().union(*(
+            _all if source == "quantdb" else doris_source.supported_datasets()
+            if source == "doris" else datayes_sync.SUPPORTED
+            for source in payload.sources
+        ))
+        if set(payload.datasets) - supported:
+            raise HTTPException(400, "所选数据集缺少可用数据源或 Doris 表映射")
     with _lock:
         if any(job["status"] in ("running", "cancelling") for job in _jobs.values()):
             raise HTTPException(409, "已有 A 股初始化任务正在执行")
@@ -258,6 +281,7 @@ async def start_initialization(
             "started_at": _now(),
             "started_by": str(current_user.get("user_id", "admin")),
             "cancel_requested": False,
+            "incremental": payload.incremental,
         }
         _jobs[job_id] = job
         for old in list(_jobs)[:-20]:

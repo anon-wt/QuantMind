@@ -48,6 +48,7 @@ export function QuantDBCatalogPanel({ connected, onPreview, refreshSignal = 0, e
     const [groups, setGroups] = useState<QuantDBGroup[]>([]);
     const [datasets, setDatasets] = useState<QuantDBDataset[]>([]);
     const [dataDir, setDataDir] = useState('');
+    const [provider, setProvider] = useState('quantdb');
     const [loading, setLoading] = useState(false);
     const [selected, setSelected] = useState<string[]>([]);
     const [submitting, setSubmitting] = useState(false);
@@ -73,8 +74,10 @@ export function QuantDBCatalogPanel({ connected, onPreview, refreshSignal = 0, e
             setGroups(visibleGroups);
             setDatasets(visibleDatasets);
             setDataDir(resp.data_dir ?? '');
+            setProvider(resp.provider ?? 'quantdb');
+            setSelected((current) => current.filter((name) => visibleDatasets.some((row) => row.dataset === name && row.available !== false)));
             if (!hasAppliedDefaultSelection.current) {
-                setSelected(visibleDatasets.map((dataset) => dataset.dataset));
+                setSelected(visibleDatasets.filter((dataset) => dataset.available !== false).map((dataset) => dataset.dataset));
                 hasAppliedDefaultSelection.current = true;
             }
         } catch (error: unknown) {
@@ -205,7 +208,7 @@ export function QuantDBCatalogPanel({ connected, onPreview, refreshSignal = 0, e
     }, [diff]);
 
     const toggleGroup = (groupId: string, checked: boolean) => {
-        const names = (datasetsByGroup.get(groupId) ?? []).map((d) => d.dataset);
+        const names = (datasetsByGroup.get(groupId) ?? []).filter((d) => d.available !== false).map((d) => d.dataset);
         setSelected(checked
             ? Array.from(new Set([...selected, ...names]))
             : selected.filter((n) => !names.includes(n)));
@@ -339,7 +342,7 @@ export function QuantDBCatalogPanel({ connected, onPreview, refreshSignal = 0, e
             {!embedded && <div className="mb-3 flex justify-end">{headerExtra}</div>}
 
             {/* Diff summary card */}
-            <div className="mb-3">
+            <div className="mb-3" hidden={provider === 'doris'}>
                 <QuantDBDiffSummary
                     diff={diff}
                     loading={diffLoading}
@@ -353,7 +356,7 @@ export function QuantDBCatalogPanel({ connected, onPreview, refreshSignal = 0, e
                 defaultActiveKey={groups.length > 0 ? [groups[0].id] : []}
                 items={groups.map((group) => {
                     const members = datasetsByGroup.get(group.id) ?? [];
-                    const names = members.map((d) => d.dataset);
+                    const names = members.filter((d) => d.available !== false).map((d) => d.dataset);
                     const checkedCount = names.filter((n) => selected.includes(n)).length;
                     return {
                         key: group.id,
@@ -383,6 +386,7 @@ export function QuantDBCatalogPanel({ connected, onPreview, refreshSignal = 0, e
                                     style: { cursor: 'pointer' },
                                 })}
                                 rowSelection={{
+                                    getCheckboxProps: (row) => ({ disabled: row.available === false }),
                                     selectedRowKeys: selected.filter((n) => names.includes(n)),
                                     onChange: (keys) => {
                                         const picked = keys as string[];
@@ -491,7 +495,7 @@ function SyncJobProgress({ job }: { job: QuantDBSyncJob }) {
                     format={() => `${job.done}/${job.total}`}
                 />
                 <Space wrap size="small">
-                    <Tag color="blue">下载 {downloaded} 个文件</Tag>
+                    <Tag color="blue">{job.provider === 'doris' ? `同步 ${downloaded} 行` : `下载 ${downloaded} 个文件`}</Tag>
                     {failed.length > 0 && <Tag color="red">{failed.length} 个数据集失败</Tag>}
                     {job.pg_fill && (
                         <Tag color={job.pg_fill.status === 'ok' ? 'green' : 'orange'}>
@@ -513,7 +517,7 @@ function SyncJobProgress({ job }: { job: QuantDBSyncJob }) {
                             {results.map((r) => (
                                 <Tag
                                     key={r.dataset}
-                                    color={r.status === 'synced' ? 'green' : r.status === 'up_to_date' ? 'blue' : 'red'}
+                                    color={r.status === 'synced' ? 'green' : r.status === 'up_to_date' ? 'blue' : r.status === 'empty' ? 'default' : 'red'}
                                     className="text-xs"
                                 >
                                     {r.dataset}
@@ -524,6 +528,7 @@ function SyncJobProgress({ job }: { job: QuantDBSyncJob }) {
                     </div>
                 )}
                 {job.error && <Alert type="error" showIcon message={job.error} />}
+                {job.summary?.skipped_stock_rows > 0 && <Alert type="warning" showIcon message={`Doris 已跳过 ${job.summary.skipped_stock_rows} 条无法识别的证券记录，请核对源表编码。`} />}
                 {failed.length > 0 && (
                     <Space direction="vertical" size={0}>
                         {failed.map((r) => (

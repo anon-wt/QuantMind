@@ -113,7 +113,12 @@ class QlibDataBuilder:
             if data_dir is None:
                 data_dir = _resolve_cn_data_dir()
             hub = QuantDBDataHub(data_dir)
-            default_qlib = Path("/data/qlib/cn_data")
+            from backend.services.engine.data_platform.a_share_sources import selected_source
+            if selected_source() == "doris":
+                from backend.shared.qlib_paths import resolve_qlib_provider_uri
+                default_qlib = Path(resolve_qlib_provider_uri("CN"))
+            else:
+                default_qlib = Path("/data/qlib/cn_data")
         elif market_upper == "US":
             if data_dir is None:
                 data_dir = quantus_hub._resolve_quantus_data_dir()
@@ -876,19 +881,10 @@ class QlibDataBuilder:
 
 
 def _resolve_cn_data_dir() -> Path:
-    """解析 A 股数据目录（兼容容器/宿主机）。"""
-    import os
+    """构建器与训练、行情使用同一份已选择的本地数据。"""
+    from .data_platform.a_share_sources import read_data_root
 
-    env_val = os.getenv("QM_QUANTDB_DATA_DIR", "").strip()
-    if env_val:
-        return Path(env_val)
-    for candidate in (
-        Path("/data/quantdb"),
-        Path(__file__).resolve().parents[3] / "data" / "quantdb",
-    ):
-        if candidate.is_dir():
-            return candidate
-    return Path("/data/quantdb")
+    return read_data_root()
 
 
 def ensure_qlib_cache(

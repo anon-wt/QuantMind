@@ -196,16 +196,16 @@ export function QuantDBPreviewDrawer({ dataset, onClose, onSynced }: QuantDBPrev
                     <Button icon={<ReloadOutlined />} onClick={() => load()} loading={loading}>
                         刷新
                     </Button>
-                    <Button icon={<CloudDownloadOutlined />} onClick={fetchRemote} loading={loading}>
+                    <Button icon={<CloudDownloadOutlined />} onClick={fetchRemote} loading={loading} hidden={dataset?.provider === 'doris'}>
                         远端预览
                     </Button>
-                    <Tooltip title="比对远端 manifest：本地缺失或与远端不一致的数据自动从远端增量拉取">
+                    <Tooltip title={dataset?.provider === 'doris' ? '按 Doris 表映射及已保存的增量进度同步本地数据' : '比对远端 manifest：本地缺失或与远端不一致的数据自动从远端增量拉取'}>
                         <Button
                             type="primary"
                             icon={<CloudSyncOutlined />}
                             onClick={handleSync}
                             loading={startingSync}
-                            disabled={isSyncingThis}
+                            disabled={isSyncingThis || dataset?.available === false}
                         >
                             {isSyncingThis ? '同步中...' : '增量同步'}
                         </Button>

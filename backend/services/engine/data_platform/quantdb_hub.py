@@ -86,18 +86,15 @@ def _dir_has_data(p: Path) -> bool:
 
 
 def _selected_a_source() -> str:
-    from backend.shared.data_source_config import get_enabled_sources
+    from .a_share_sources import selected_source
 
-    sources = get_enabled_sources("A")
-    return "datayes" if sources.get("datayes") and not sources.get("quantdb", True) else "quantdb"
+    return selected_source()
 
 
 def _resolve_read_data_dir() -> Path:
-    if _selected_a_source() == "datayes":
-        from .datayes_sync import data_root
+    from .a_share_sources import read_data_root
 
-        return data_root()
-    return _resolve_data_dir()
+    return read_data_root()
 
 
 # ---------------------------------------------------------------------------

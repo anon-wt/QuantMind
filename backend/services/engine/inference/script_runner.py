@@ -88,6 +88,10 @@ def _resolve_quantdb_data_dir() -> str:
     历史默认值 /app/data/quantdb 在容器内不存在（真实挂载为 /data/quantdb），
     曾导致 quantdb_factors 模型推理前置检查永远失败、推理按钮置灰。
     """
+    from backend.services.engine.data_platform.a_share_sources import selected_source, read_data_root
+
+    if selected_source() != "quantdb":
+        return str(read_data_root())
     for key in ("QUANTDB_DATA_DIR", "QM_QUANTDB_DATA_DIR"):
         val = os.getenv(key, "").strip()
         if val and Path(val).is_dir():

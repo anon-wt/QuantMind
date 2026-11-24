@@ -28,6 +28,7 @@ MARKET_SOURCES = {
     "A": {
         "quantdb": {"label": "QuantDB A股", "default": True},
         "datayes": {"label": "Datayes 通联数据", "default": False},
+        "doris": {"label": "Doris 数据库", "default": False},
         "akshare": {"label": "akshare", "default": True},
         "hsgt_north": {"label": "北向资金(沪深港通)", "default": True},
         "hsgt_south": {"label": "南向资金(港股通)", "default": True},

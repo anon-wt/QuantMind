@@ -170,8 +170,17 @@ def _build_catalog_payload(root: Path) -> dict[str, Any]:
 async def get_catalog(current_user: dict = Depends(require_admin)):
     """返回数据集目录（按大类分组）+ 本地落盘统计。"""
     try:
-        root = _data_dir()
+        from backend.services.engine.data_platform.a_share_sources import read_data_root, selected_source
+
+        root = read_data_root()
         payload = await asyncio.to_thread(_build_catalog_payload, root)
+        payload["provider"] = selected_source()
+        if payload["provider"] == "doris":
+            from backend.services.engine.data_platform.doris_source import supported_datasets
+            available = supported_datasets()
+            for row in payload["datasets"]:
+                row["available"] = row["dataset"] in available
+                row["provider"] = "doris"
 
         return {
             "success": True,
@@ -322,7 +331,11 @@ async def preview_dataset(
     import pandas as pd
 
     spec = _spec(dataset)
-    root = _data_dir()
+    from backend.services.engine.data_platform.a_share_sources import read_data_root, selected_source
+
+    root = read_data_root()
+    if selected_source() == "doris" and remote:
+        raise HTTPException(400, "Doris 数据仅从本地 Parquet 预览，请先同步对应数据集")
 
     file_path = None if remote else _pick_local_file(spec, root, symbol)
 
@@ -336,6 +349,8 @@ async def preview_dataset(
                 _get_client,
                 _to_qdb_symbol,
             )
+            if selected_source() == "doris":
+                raise HTTPException(404, "Doris 本地尚无此数据集，请先初始化或增量同步")
             client = _get_client()
             df = client.preview_as_df(
                 category_id=spec.category_id,
@@ -664,8 +679,6 @@ def _run_manifest_fallback(
 
 
 def _run_sync_job(job_id: str, req: SyncDatasetsRequest) -> None:
-    from backend.scripts.quantdb_daily_sync import run_daily_sync
-
     # 取消检查辅助
     def _cancelled() -> bool:
         with _jobs_lock:
@@ -705,7 +718,15 @@ def _run_sync_job(job_id: str, req: SyncDatasetsRequest) -> None:
                     "phase": "dataset_done",
                 }
 
+    with _jobs_lock:
+        provider = (_jobs.get(job_id) or {}).get("provider", "quantdb")
+    if provider == "doris":
+        _run_doris_sync_job(job_id, req, _on_progress, _cancelled)
+        return
+
     # Phase 1: parquet 同步（使用 quantdb_daily_sync 的统一逻辑）
+    from backend.scripts.quantdb_daily_sync import run_daily_sync
+
     _job_update(job_id, stage="sync_parquet")
     try:
         sync_result = run_daily_sync(
@@ -803,6 +824,34 @@ def _run_sync_job(job_id: str, req: SyncDatasetsRequest) -> None:
     _job_update(job_id, status="completed", stage="done", finished_at=_now_iso())
 
 
+def _run_doris_sync_job(job_id, req, progress, cancelled):
+    from datetime import date
+    from backend.services.engine.data_platform import doris_source
+
+    try:
+        result = doris_source.sync_doris(
+            req.datasets, date(2016, 1, 1), date.today(), progress=progress, should_cancel=cancelled,
+        )
+        rows = [{**item, "status": "synced" if item["status"] == "completed" else item["status"],
+                 "downloaded": item.get("rows", 0)} for item in result["datasets"]]
+        _job_update(job_id, results=rows, done=len(rows), total=len(rows), summary={"skipped_stock_rows": result.get("skipped_stock_rows", 0)})
+        if result["cancelled"]:
+            _job_update(job_id, status="cancelled", finished_at=_now_iso())
+            return
+        if result["errors"]:
+            _job_update(job_id, status="failed", error="Doris 部分数据集同步失败，请查看结果", finished_at=_now_iso())
+            return
+        if req.with_pg:
+            from backend.scripts.stock_daily_latest_refresh import refresh_stock_daily_latest
+            _job_update(job_id, pg_fill=refresh_stock_daily_latest(days=30, force=True))
+        if req.with_qlib and not cancelled():
+            from backend.services.engine.qlib_data_builder import ensure_qlib_cache
+            _job_update(job_id, qlib_cache={"status": "ok", "provider_uri": ensure_qlib_cache("CN", quantdb_dir=doris_source.data_root())})
+        _job_update(job_id, status="cancelled" if cancelled() else "completed", stage="done", finished_at=_now_iso())
+    except Exception:
+        _job_update(job_id, status="failed", error="Doris 同步失败，请检查连接、表映射及后端日志", finished_at=_now_iso())
+
+
 @router.post("/sync-datasets")
 async def sync_datasets(
     payload: SyncDatasetsRequest,
@@ -812,11 +861,19 @@ async def sync_datasets(
     for name in payload.datasets:
         _spec(name)
 
+    from backend.services.engine.data_platform.a_share_sources import selected_source
+    provider = selected_source()
+    if provider == "doris":
+        from backend.services.engine.data_platform.doris_source import supported_datasets
+        if set(payload.datasets) - supported_datasets():
+            raise HTTPException(400, "所选数据集尚未配置 Doris 表或字段映射")
+
     job_id = f"qdb-{next(_job_counter)}"
     job = {
         "job_id": job_id,
         "status": "running",
         "stage": "sync_parquet",
+        "provider": provider,
         "datasets": list(payload.datasets),
         "total": len(payload.datasets),
         "done": 0,

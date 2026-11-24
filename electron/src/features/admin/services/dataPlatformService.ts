@@ -107,10 +107,36 @@ export interface DatayesConfig {
     timestamp: string;
 }
 
-export type AShareSource = 'quantdb' | 'datayes';
+export interface DorisTableMapping {
+    table: string;
+    date_column?: string | null;
+    date_format: 'date' | 'yyyymmdd';
+}
+export interface DorisConnection {
+    host: string;
+    port: number;
+    database: string;
+    user: string;
+    password?: string;
+    table_prefix: string;
+    lookback_days: number;
+    mappings: Record<string, DorisTableMapping>;
+    dataset_mappings: Record<string, DorisTableMapping & { columns: Record<string, string> }>;
+}
+export interface DorisConfig {
+    configured: boolean;
+    password_configured: boolean;
+    connection: DorisConnection | null;
+    root: string;
+    supported_datasets: string[];
+    endpoints: string[];
+    factor_datasets: string[];
+    datasets: Array<{ dataset: string; name: string; path: string }>;
+}
+export type AShareSource = 'quantdb' | 'datayes' | 'doris';
 export interface AShareInitCatalog {
     providers: Array<{ source: AShareSource; label: string; enabled: boolean; configured: boolean; root: string; dataset_count: number; local_dataset_count: number }>;
-    datasets: Array<{ dataset: string; name: string; group: string; sources: AShareSource[]; datayes_note: string }>;
+    datasets: Array<{ dataset: string; name: string; group: string; sources: AShareSource[]; datayes_note: string; doris_note?: string }>;
     timestamp: string;
 }
 export interface AShareInitJob {
@@ -125,6 +151,7 @@ export interface AShareInitJob {
     detail?: { dataset?: string; done?: number; total?: number; rows?: number };
     results: Array<{
         source: AShareSource; root?: string; errors?: number; error?: string;
+        skipped_stock_rows?: number;
         datasets?: Array<{ dataset: string; status: string; rows: number; error?: string }> | Record<string, { downloaded?: number; skipped?: number; errors?: number }>;
     }>;
 }
@@ -176,6 +203,8 @@ export interface QuantDBDataset {
     end_date?: string;
     partitions?: number;
     updated_at?: string;
+    provider?: AShareSource;
+    available?: boolean;
 }
 
 export interface QuantDBPreview {
@@ -195,6 +224,7 @@ export interface QuantDBPreview {
 
 export interface QuantDBSyncJob {
     job_id: string;
+    provider?: AShareSource;
     status: 'running' | 'completed' | 'failed' | 'cancelled' | 'cancelling';
     stage: string;
     datasets: string[];
@@ -203,7 +233,7 @@ export interface QuantDBSyncJob {
     current?: string | null;
     results: Array<{
         dataset: string;
-        status: 'synced' | 'up_to_date' | 'failed';
+        status: 'synced' | 'up_to_date' | 'failed' | 'empty';
         downloaded: number;
         layout?: string;
         error?: string;
@@ -682,11 +712,29 @@ class DataPlatformService {
         return this.unwrap(resp);
     }
 
+    async getDorisConfig(): Promise<DorisConfig> {
+        return this.unwrap(await this.axiosInstance.get('/admin/data-platform/doris/config'));
+    }
+
+    async saveDorisConfig(config: DorisConnection): Promise<DorisConfig> {
+        return this.unwrap(await this.axiosInstance.post('/admin/data-platform/doris/config', config));
+    }
+
+    async testDorisConnection(config: DorisConnection): Promise<{ connected: boolean }> {
+        return this.unwrap(await this.axiosInstance.post('/admin/data-platform/doris/test', config, { timeout: 45000 }));
+    }
+
+    async discoverDorisTables(config: DorisConnection): Promise<{
+        mappings: Record<string, DorisTableMapping>; table_count: number; factor_candidates: string[];
+    }> {
+        return this.unwrap(await this.axiosInstance.post('/admin/data-platform/doris/discover', config, { timeout: 60000 }));
+    }
+
     async getAShareInitCatalog(): Promise<AShareInitCatalog> {
         return this.unwrap(await this.axiosInstance.get('/admin/data-platform/a-share/initialization'));
     }
 
-    async startAShareInitialization(payload: { sources: AShareSource[]; datasets: string[]; start_date: string; end_date: string }): Promise<{ job: AShareInitJob }> {
+    async startAShareInitialization(payload: { sources: AShareSource[]; datasets: string[]; start_date: string; end_date: string; incremental?: boolean }): Promise<{ job: AShareInitJob }> {
         return this.unwrap(await this.axiosInstance.post('/admin/data-platform/a-share/initialization/jobs', payload));
     }
 
@@ -726,6 +774,7 @@ class DataPlatformService {
 
     async getQuantDBCatalog(): Promise<{
         data_dir: string;
+        provider?: AShareSource;
         groups: QuantDBGroup[];
         datasets: QuantDBDataset[];
         timestamp: string;

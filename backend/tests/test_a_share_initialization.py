@@ -71,12 +71,14 @@ def request(sources=None, datasets=None):
     }
 
 
-def test_catalog_exposes_two_initialization_sources_and_explicit_coverage(api):
+def test_catalog_exposes_three_initialization_sources_and_explicit_coverage(api):
     client, _, _ = api
     response = client.get("/initialization")
     assert response.status_code == 200
     data = response.json()["data"]
-    assert [p["source"] for p in data["providers"]] == ["quantdb", "datayes"]
+    assert [p["source"] for p in data["providers"]] == ["quantdb", "datayes", "doris"]
+    assert data["providers"][2]["enabled"] is False
+    assert data["providers"][2]["configured"] is False
     assert next(d for d in data["datasets"] if d["dataset"] == "l1_factors")[
         "sources"
     ] == ["quantdb"]

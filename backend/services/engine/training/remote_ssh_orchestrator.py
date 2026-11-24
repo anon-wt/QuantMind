@@ -390,6 +390,12 @@ class RemoteSSHOrchestrator(TrainingOrchestrator):
         try:
             # Direct jobs bind exactly one raw QuantDB source; legacy jobs keep
             # their immutable snapshot mount for historical model compatibility.
+            from backend.services.engine.data_platform.a_share_sources import selected_source
+            if payload.get("factor_source") and selected_source() == "doris":
+                raise RuntimeError(
+                    "Doris 数据当前同步在本地服务器，请选择本地 Docker 节点训练；"
+                    "远程节点尚未接入 Doris Parquet 分发，不能改用 QuantDB 数据训练"
+                )
             # ── 数据探针（时间切分的唯一来源）────────────────────────────────
             # 切分不再依赖后端因子目录的草稿/发布状态：直接探针读取本节点
             # （远程 AutoDL）自己的 QuantDB 窗口与交易日序列，本地/远端各自自洽。

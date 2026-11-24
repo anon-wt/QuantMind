@@ -47,7 +47,7 @@ export const AdminDataManagement: React.FC = () => {
       label: (
         <span className="flex items-center gap-2 font-bold text-sm">
           <span>🇨🇳</span>
-          <span>A 股市场 (QuantDB)</span>
+          <span>A 股市场</span>
         </span>
       ),
       children: <AdminQuantDBPanel />,
@@ -157,11 +157,11 @@ export const AdminDataManagement: React.FC = () => {
                 数据管理平台
               </Title>
               <Tag color="success" className="m-0 border-none rounded-full px-2.5 py-0.5 text-[11px] font-black bg-emerald-50 text-emerald-600 flex items-center gap-1">
-                <CheckCircleFilled /> QuantDB 云端直供
+                <CheckCircleFilled /> 多数据源
               </Tag>
             </div>
             <Text className="text-slate-400 text-xs mt-1 block">
-              全量标准化行情、L2 资金流、板块成分与 AI 预计算因子由 QuantDB 直接云端供应与同步，免除本地二次 ETL 清洗。
+              选择数据源并同步到本地标准数据目录，供投研、模型训练、推理与回测使用。A 股支持 QuantDB、Datayes 和 Doris。
             </Text>
           </div>
         </div>

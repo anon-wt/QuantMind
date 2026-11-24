@@ -132,7 +132,7 @@ def normalize(frame: pd.DataFrame, dataset: str) -> pd.DataFrame:
             return StockCodeUtil.from_datayes(
                 row.get("secID") or row.get("indexID") or row.get("ticker", ""),
                 row.get("exchangeCD", ""),
-            )
+            ) or StockCodeUtil.from_datayes(row.get("ticker", ""), row.get("exchangeCD", ""))
 
         frame["symbol"] = frame.apply(symbol, axis=1)
         if (frame["symbol"] == "").any():
@@ -183,6 +183,13 @@ def normalize(frame: pd.DataFrame, dataset: str) -> pd.DataFrame:
         frame["float_mv"] = frame["circ_mv"]
     if dataset == "instrument_detail" and "stock_name" in frame:
         frame["name"] = frame["stock_name"]
+        frame["Name"] = frame["stock_name"]
+    if dataset == "instrument_detail" and "list_date" in frame:
+        frame["J_start"] = pd.to_datetime(
+            frame["list_date"], errors="coerce"
+        ).dt.strftime("%Y%m%d")
+    if dataset == "instrument_detail" and "listStatusCD" in frame:
+        frame["IsQuitGP"] = frame["listStatusCD"].eq("DE")
     date_col = next(
         (
             c
@@ -275,7 +282,7 @@ def _windows(start: date, end: date, days: int = 90):
         start = stop + timedelta(days=1)
 
 
-def _derived(root: Path, dataset: str, start: date, end: date, cancelled):
+def _derived(root: Path, dataset: str, start: date, end: date, cancelled, source_name="datayes"):
     from .quantdb_hub import QuantDBDataHub
 
     if (end - start).days > 365:
@@ -289,6 +296,7 @@ def _derived(root: Path, dataset: str, start: date, end: date, cancelled):
                 datetime.strptime(begin, "%Y%m%d").date(),
                 datetime.strptime(stop, "%Y%m%d").date(),
                 cancelled,
+                source_name,
             )
         return rows
     hub = QuantDBDataHub(root)
@@ -352,7 +360,7 @@ def _derived(root: Path, dataset: str, start: date, end: date, cancelled):
                 if c in valuation
             ]
             result = result.merge(valuation[columns], on=["symbol", "time"], how="left")
-    result["data_source"] = "datayes"
+    result["data_source"] = source_name
     return write_frame(root, dataset, result)
 
 
@@ -456,32 +464,43 @@ def sync_datayes(
     should_cancel=lambda: False,
     client=None,
     root: Path | None = None,
+    source_name: str = "datayes",
+    local_datasets: set[str] | None = None,
 ):
     unknown = set(datasets) - SUPPORTED
     if unknown:
         raise ValueError("Datayes 暂不支持：" + ", ".join(sorted(unknown)))
     root = root or data_root()
     selected = plan_datasets(datasets)
+    local_datasets = local_datasets or set()
     order = [
         s.dataset
         for s in DATASETS
-        if s.dataset in selected and s.dataset not in DERIVED
+        if s.dataset in selected and s.dataset not in DERIVED and s.dataset not in local_datasets
     ]
     order += [
-        s.dataset for s in DATASETS if s.dataset in selected and s.dataset in DERIVED
+        s.dataset for s in DATASETS if s.dataset in selected and s.dataset in DERIVED and s.dataset not in local_datasets
     ]
     own_client = client is None
     client = client or DatayesClient(should_cancel)
     results = []
+
+    def normalize_source(frame, dataset):
+        normalized = normalize(frame, dataset)
+        if not normalized.empty:
+            normalized["data_source"] = source_name
+        return normalized
+
     try:
         if should_cancel():
             raise SyncCancelled()
         stocks = client.fetch("equity/getEqu", equTypeCD="A", listStatusCD="L,S,DE")
-        stocks = normalize(stocks, "instrument_detail")
+        stocks = normalize_source(stocks, "instrument_detail")
         if stocks.empty:
             raise ValueError("Datayes 股票列表为空，无法初始化")
-        write_frame(root, "instrument_detail", stocks)
-        calendar = normalize(
+        if "instrument_detail" not in local_datasets:
+            write_frame(root, "instrument_detail", stocks)
+        calendar = normalize_source(
             client.fetch(
                 "master/getTradeCal",
                 exchangeCD="XSHG,XSHE",
@@ -503,7 +522,8 @@ def sync_datayes(
                 ].dt.date
             )
         )
-        write_frame(root, "trading_calendar", calendar)
+        if "trading_calendar" not in local_datasets:
+            write_frame(root, "trading_calendar", calendar)
         sec_ids = stocks["secID"].drop_duplicates().tolist()
         batches = [sec_ids[i : i + 50] for i in range(0, len(sec_ids), 50)]
         for dataset in order:
@@ -515,10 +535,10 @@ def sync_datayes(
                     progress(
                         "dataset_start",
                         dataset=dataset,
-                        message=f"Datayes：{get_dataset_spec(dataset).name}",
+                        message=f"{source_name}：{get_dataset_spec(dataset).name}",
                     )
                 if dataset in DERIVED:
-                    rows = _derived(root, dataset, start, end, should_cancel)
+                    rows = _derived(root, dataset, start, end, should_cancel, source_name)
                 else:
                     endpoint, mode = ENDPOINTS[dataset]
                     if mode == "stocks":
@@ -606,7 +626,7 @@ def sync_datayes(
                                 if mode in ("weights", "etf", "bonds", "sectors")
                                 else client.fetch(endpoint, **params)
                             )
-                            frame = normalize(raw, dataset)
+                            frame = normalize_source(raw, dataset)
                         if not frame.empty and dataset in {
                             "daily_forward",
                             "daily_backward",

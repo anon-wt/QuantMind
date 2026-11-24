@@ -107,21 +107,13 @@ def market_data_dir(market: str | None = None) -> Path:
     不探测 Windows 盘符，避免本地盘符污染服务端判断。
     """
     market_upper = normalize_market(market)
+    if market_upper == "CN":
+        from .a_share_sources import read_data_root
+
+        return read_data_root()
     env_val = os.getenv(MARKET_DATA_DIR_ENV[market_upper], "").strip()
     if env_val:
         return Path(env_val)
-    # CN 市场优先通过 hub 统一解析（hub 按 /data/quantdb -> /app/data/quantdb 探测）
-    if market_upper == "CN":
-        try:
-            from backend.services.engine.data_platform.quantdb_hub import (
-                _resolve_data_dir,
-            )
-
-            hub_dir = _resolve_data_dir()
-            if hub_dir.is_dir():
-                return hub_dir
-        except Exception:
-            pass
     return Path(MARKET_DATA_DIR_DEFAULT[market_upper])
 
 

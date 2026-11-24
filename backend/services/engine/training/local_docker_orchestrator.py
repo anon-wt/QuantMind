@@ -195,7 +195,7 @@ def _market_data_mount(market: str) -> tuple[str, str]:
     """返回 (宿主机数据目录, 训练容器挂载目录)；CN 复用既有 QuantDB 常量。"""
     market = normalize_market(market)
     if market == "CN":
-        return _QUANTDB_DATA_HOST_PATH, _QUANTDB_DATA_MOUNT_DIR
+        return _market_host_path(str(market_data_dir("CN"))), _QUANTDB_DATA_MOUNT_DIR
     container_dir = (
         os.getenv(_MARKET_DATA_DIR_ENV[market], "").strip()
         or _MARKET_DATA_DIR_DEFAULT[market]
@@ -830,15 +830,17 @@ class LocalDockerOrchestrator(TrainingOrchestrator):
         # 挂载 QuantDB 全量数据（6大类：kline/base_sector/financial/bond_etf/technical_derived/ml_datasets）
         # 存在性检查必须针对【容器内】可见的 _qdb_dir，而非宿主机路径
         # （API 容器内 os.path.exists 无法感知宿主机路径，与 _LOCAL_DATA_PATH 同理）
-        if Path(_qdb_dir).exists():
-            volumes[_QUANTDB_DATA_HOST_PATH] = {
+        _cn_data_dir = str(market_data_dir("CN"))
+        _cn_host_path, _cn_mount_dir = _market_data_mount("CN")
+        if Path(_cn_data_dir).exists():
+            volumes[_cn_host_path] = {
                 "bind": _QUANTDB_DATA_MOUNT_DIR,
                 "mode": "ro",
             }
             logger.info(
                 "[%s] QuantDB data mounted: %s (host) -> %s",
                 run_id,
-                _QUANTDB_DATA_HOST_PATH,
+                _cn_host_path,
                 _QUANTDB_DATA_MOUNT_DIR,
             )
         else:
@@ -846,7 +848,7 @@ class LocalDockerOrchestrator(TrainingOrchestrator):
                 "[%s] QuantDB data dir not visible at %s; skipping mount "
                 "(industry code ind_code_l1 will be unavailable)",
                 run_id,
-                _qdb_dir,
+                _cn_data_dir,
             )
         # 非 CN 市场：挂载该市场数据根目录（quanthk/quantus/…），训练直读
         # 6_ml_datasets 因子源；CN 复用上方 QuantDB 挂载。

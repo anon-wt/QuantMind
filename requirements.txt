@@ -19,6 +19,7 @@ pyyaml
 # 数据库与存储
 sqlalchemy
 psycopg2-binary
+PyMySQL>=1.1.1,<2
 asyncpg
 alembic
 docker>=6.0
