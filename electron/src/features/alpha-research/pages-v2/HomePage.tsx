@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   Sparkles, Dna, Database, BarChart3, ArrowRight, Zap,
   Layers, Shield, Activity, Cpu,
-  Loader2, Square
+  Loader2, Square, AlertCircle
 } from 'lucide-react';
 import { ChatInput } from '../components-v2/ChatInput';
 import { ResearchDirectionsDialog } from '../components-v2/ResearchDirectionsDialog';
@@ -194,6 +194,15 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
             <p>上次挖掘提交结果尚未确认。确认操作使用原参数找回任务；若尚未入队，则以原提交继续申请。</p>
             <button type="button" disabled={miningStarting} className="mt-2 rounded border border-amber-300 px-3 py-1 disabled:opacity-50" onClick={retryMiningSubmission}>{miningStarting ? '确认中…' : '确认原提交'}</button>
           </div>}
+          {!taskActive && task?.status === 'failed' && (
+            <div role="alert" className="mx-auto flex w-full max-w-4xl items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-800">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <div className="min-w-0 whitespace-pre-wrap break-words">
+                <p className="font-semibold">因子挖掘未成功启动或执行失败</p>
+                <p className="mt-1">{task.progress?.message || task.logs?.at(-1)?.message || '请查看任务详情后重试'}</p>
+              </div>
+            </div>
+          )}
           <ChatInput
             inline={true}
             initialPrompt={activePrompt}

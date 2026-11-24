@@ -235,11 +235,11 @@ async def run_queue():
                     )
                     if queued:
                         item = queued[0]
-                        row = await store.get(
-                            item["task_id"],
-                            tenant_id=item["tenant_id"],
-                            user_id=item["user_id"],
-                        )
+                        row = await store.get_for_dispatch(item["task_id"])
+                        if row and any(row[key] != item[key] for key in (
+                            "tenant_id", "user_id"
+                        )):
+                            raise ValueError("Mining queue owner does not match task")
                         if row and row["status"] in {"pending", "queued"}:
                             # OSS-ADAPT: OSS 单容器不支持远端挖掘节点
                             # (celery-worker-factor-remote)，固定本地执行。

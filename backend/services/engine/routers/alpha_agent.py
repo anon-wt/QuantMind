@@ -14,12 +14,13 @@ from pathlib import Path
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Body, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from backend.services.engine.alpha_agent.hw_lock import HardwareLockError
 from backend.services.engine.alpha_agent.launcher import get_launcher
+from backend.services.engine.alpha_agent.api_models import MiningSubmitRequest
 from backend.services.engine.auth_context import (
     assert_identity_not_spoofed,
     get_authenticated_identity,
@@ -261,6 +262,7 @@ async def start_evolution(
     directions: list[str] = Query(default=[], description="L1 因子类别方向列表（多选）"),
     direction_mode: str = Query("selected", description="类别选择模式: selected=取第一条, random=随机一条"),
     data_source: str = Query("", description="数据源: qlib_bin, parquet, pg (留空使用默认)"),
+    payload: MiningSubmitRequest | None = Body(default=None),
 ):
     """启动因子演化任务"""
     auth_user_id, auth_tenant_id = get_authenticated_identity(request)
@@ -268,6 +270,37 @@ async def start_evolution(
         auth_user_id=auth_user_id,
         auth_tenant_id=auth_tenant_id,
         provided_user_id=user_id,
+    )
+
+    # JSON is the current UI contract; retain query-only requests for old clients.
+    values = dict(
+        algorithm="rdagent", market=market, universe=universe, loop_n=loop_n,
+        direction=direction, directions=directions, direction_mode=direction_mode,
+        data_source=data_source,
+    )
+    if isinstance(payload, MiningSubmitRequest):
+        values.update(payload.model_dump(exclude_none=True))
+    from backend.services.engine.alpha_agent.algorithm_registry import (
+        AlgorithmError, resolve_algorithm,
+    )
+    try:
+        algorithm = resolve_algorithm(
+            values["algorithm"], market=values["market"],
+            freq=values.get("freq", "day"), datasets=values.get("datasets"),
+        )
+    except AlgorithmError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if algorithm.key == "statistical":
+        from backend.services.engine.alpha_agent.statistical_runtime import (
+            submit_statistical,
+        )
+        return await submit_statistical(
+            request, values, algorithm,
+            {"tenant_id": auth_tenant_id, "user_id": auth_user_id},
+        )
+    market, universe, loop_n = (values[k] for k in ("market", "universe", "loop_n"))
+    direction, directions, direction_mode, data_source = (
+        values[k] for k in ("direction", "directions", "direction_mode", "data_source")
     )
 
     # Validate market
@@ -340,6 +373,11 @@ async def start_evolution(
             direction=direction or None,
             data_source=data_source or None,
             llm_overrides=llm_config.llm_env_overrides(),
+            tenant_id=auth_tenant_id,
+            datasets=values.get("datasets"),
+            **{key: values.get(key) for key in (
+                "mining_start", "mining_end", "valid_start", "valid_end"
+            )},
         )
     except HardwareLockError as exc:
         raise HTTPException(status_code=412, detail=str(exc)) from exc

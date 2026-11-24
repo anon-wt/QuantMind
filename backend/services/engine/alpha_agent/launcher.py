@@ -102,6 +102,7 @@ class EvolutionTask:
     task_id: str
     user_id: str
     tenant_id: str = "default"
+    algorithm: str = "rdagent"
     market: str = "a_share"
     data_source: str = ""
     datasets: tuple[str, ...] = ()
@@ -261,6 +262,12 @@ class AlphaAgentLauncher:
         direction: str | None = None,
         data_source: str | None = None,
         llm_overrides: dict[str, str] | None = None,
+        tenant_id: str = "default",
+        datasets: list[str] | None = None,
+        mining_start: str | None = None,
+        mining_end: str | None = None,
+        valid_start: str | None = None,
+        valid_end: str | None = None,
     ) -> str:
         """Start a factor evolution task. Returns task_id.
 
@@ -275,6 +282,9 @@ class AlphaAgentLauncher:
         task = EvolutionTask(
             task_id=task_id, user_id=user_id, market=market,
             universe=universe, loop_n=loop_n, data_source=data_source or "",
+            tenant_id=tenant_id, datasets=tuple(datasets or ()),
+            mining_start=mining_start, mining_end=mining_end,
+            valid_start=valid_start, valid_end=valid_end,
         )
         self._tasks[task_id] = task
 
@@ -489,6 +499,12 @@ class AlphaAgentLauncher:
             raise ValueError("Persisted task owner is not canonical")
         if record.get("market") != "a_share":
             raise ValueError("Only A-share mining is supported")
+        if record.get("algorithm") == "statistical":
+            from backend.services.engine.alpha_agent.statistical_runtime import (
+                run_statistical,
+            )
+            await run_statistical(self, record)
+            return
         task = EvolutionTask(
             task_id=record["task_id"],
             tenant_id=record["tenant_id"],
@@ -605,6 +621,7 @@ class AlphaAgentLauncher:
             "task_id": task.task_id,
             "user_id": task.user_id,
             "tenant_id": task.tenant_id,
+            "algorithm": task.algorithm,
             "status": task.status.value,
             "progress": task.progress,
             "phase": task.phase,
@@ -653,7 +670,7 @@ class AlphaAgentLauncher:
         task = self._tasks.get(task_id)
         if not task:
             return None
-        log_file = self._log_dir / task_id / "subprocess_stdout.log"
+        log_file = self._resolve_task_dir(task) / "subprocess_stdout.log"
         if not log_file.exists():
             return None
         try:
@@ -693,6 +710,7 @@ class AlphaAgentLauncher:
                 "task_id": task.task_id,
                 "user_id": task.user_id,
                 "tenant_id": task.tenant_id,
+                "algorithm": task.algorithm,
                 "market": task.market,
                 "data_source": task.data_source,
                 "datasets": list(task.datasets),
@@ -732,6 +750,7 @@ class AlphaAgentLauncher:
                         task_id=data["task_id"],
                         user_id=data["user_id"],
                         tenant_id=data.get("tenant_id", "default"),
+                        algorithm=data.get("algorithm", "rdagent"),
                         market=data.get("market", "a_share"),
                         data_source=data.get("data_source", ""),
                         datasets=tuple(data.get("datasets") or ()),
