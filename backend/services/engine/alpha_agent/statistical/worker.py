@@ -248,6 +248,7 @@ _TASK_ENVELOPE_PARAMS = frozenset(
         "gp_config",
         "prediction_horizon",
         "label_spec",
+        "quality_config",
     }
 )
 
@@ -401,13 +402,17 @@ def run(request_path: Path, result_path: Path, progress_path: Path) -> None:
             valid_start=params.get("valid_start"), valid_end=params.get("valid_end"),
             progress=report,
         )
+        if "quality_config" in params:
+            from ..quality_runtime import gate_formula_result
+            report("quality", "统一因子质量与入库检查", progress_pct=97)
+            result = gate_formula_result(result, pd.read_parquet(panel_file), params)
         _atomic_json(result_path, _sanitize(result))
         return
     result = run_statistical_mining(
         params["mining_start"],
         params["mining_end"],
-        valid_start=params.get("valid_start"),
-        valid_end=params.get("valid_end"),
+        valid_start=None if "quality_config" in params else params.get("valid_start"),
+        valid_end=None if "quality_config" in params else params.get("valid_end"),
         cfg=config,
         price_panel=pd.read_parquet(panel_file),
         metadata=pd.read_parquet(metadata_file),
@@ -418,6 +423,10 @@ def run(request_path: Path, result_path: Path, progress_path: Path) -> None:
         cooled_keys=cooled_keys,
     )
     payload = _sanitize(result)
+    if "quality_config" in params:
+        from ..quality_runtime import gate_formula_result
+        report("quality", "统一因子质量与入库检查", progress_pct=97)
+        payload = _sanitize(gate_formula_result(payload, pd.read_parquet(panel_file), params))
     if not isinstance(payload, dict):
         raise TypeError("Statistical engine returned an invalid result")
     if snapshot.get("variant_memory"):

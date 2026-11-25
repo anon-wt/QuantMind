@@ -18,6 +18,7 @@ export interface MiningAlgorithmOption {
   supports_variant_ledger?: boolean;
   statistical_defaults?: StatisticalMiningOptions;
   gp_defaults?: GPMiningOptions;
+  quality_defaults?: import('../components-v2/QualityPanel').QualityConfig;
 }
 
 export interface MiningDatasetOption {

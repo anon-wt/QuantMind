@@ -79,6 +79,7 @@ async def submit_statistical(request: Request, values: dict, algorithm, owner: d
         "algorithm": algorithm_key,
         "prediction_horizon": values["prediction_horizon"],
         "label_spec": label_spec(values["prediction_horizon"]),
+        **({"quality_config": values["quality_config"]} if "quality_config" in values else {}),
         "market": "a_share",
         "universe": values.get("universe", "all_a"),
         "data_source": "qlib_bin",
@@ -225,6 +226,11 @@ def result_factors(task_id: str, fingerprint: str, params: dict, result: dict):
 
         metadata["label_spec"] = label_spec(params.get("prediction_horizon") or report.get("best_horizon") or (params.get("gp_config") or {}).get("horizon", 1))
         metadata["prediction_horizon"] = metadata["label_spec"]["horizon"]
+        if "quality_config" in params:
+            from .quality_gate import require_admission
+            metadata["quality_admission"] = report.get("quality_admission")
+            require_admission(metadata, params["quality_config"])
+            metadata["icir"] = metadata["rank_icir"] = metadata["quality_admission"]["oos"]["icir"]
         if algorithm_key == "gp":
             metadata["gp_expression"] = report["gp_expression"]
             metadata["gp_config"] = params["gp_config"]
@@ -236,7 +242,7 @@ def result_factors(task_id: str, fingerprint: str, params: dict, result: dict):
                 "factor_name": report["name"],
                 "factor_code": expression,
                 "factor_formulation": expression,
-                "rank_ic": report.get("rank_ic_mean"),
+                "rank_ic": metadata["quality_admission"]["oos"]["rank_ic_mean"] if "quality_config" in params else report.get("rank_ic_mean"),
                 "market": "a_share",
                 "universe": params["universe"],
                 "data_source": "qlib_bin",
@@ -459,6 +465,9 @@ async def run_statistical(launcher, record: dict):
                 frozen = await store.get_for_dispatch(task_id)
                 fingerprint = frozen["execution_fingerprint"]
                 rows = result_factors(task_id, fingerprint, params, result)
+                audit = result.get("quality_audit") or {}
+                completion = (f"{label}完成，质量评估 {audit['evaluated']} 个，合格入库 {len(rows)} 个，未入库 {audit['rejected']} 个"
+                              if audit else f"{label}完成，入选 {len(rows)} 个因子")
                 result.update(
                     label_spec=params.get("label_spec"),
                     prediction_horizon=params.get("prediction_horizon", 1),
@@ -467,7 +476,7 @@ async def run_statistical(launcher, record: dict):
                     market="a_share",
                     total_factors=len(rows),
                     persisted_factors=len(rows),
-                    message=f"{label}完成，入选 {len(rows)} 个因子",
+                    message=completion,
                 )
                 completed = await store.complete_with_result(
                     task_id,
@@ -480,7 +489,7 @@ async def run_statistical(launcher, record: dict):
                     task.status = TaskStatus.COMPLETED
                     task.phase = "completed"
                     task.progress_pct = 100
-                    task.progress = f"{label}完成，入选 {len(rows)} 个因子"
+                    task.progress = completion
                     task.result = {
                         "total_factors": len(rows),
                         "persisted_factors": len(rows),

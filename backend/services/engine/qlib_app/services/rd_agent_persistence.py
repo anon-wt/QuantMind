@@ -150,8 +150,12 @@ class RDAgentFactorPersistence:
         factor_formulation: str | None = None,
         data_source: str | None = None,
         date_range: str | None = None,
+        quality_config: dict | None = None,
     ) -> None:
         """保存 RD-Agent 生成的因子"""
+        if quality_config is not None:
+            from backend.services.engine.alpha_agent.quality_gate import require_admission
+            require_admission(metadata or {}, quality_config)
         meta_json = json.dumps(metadata or {}, ensure_ascii=False)
         async with get_session() as session:
             await session.execute(
@@ -1414,6 +1418,18 @@ class AlphaMiningTaskPersistence:
                 raise ValueError("Mining result does not match the frozen task spec")
             if task["status"] != "running":
                 return False
+
+            frozen_params = (await session.execute(text(
+                "SELECT params_json FROM alpha_mining_task_specs WHERE task_id=:task "
+                "AND tenant_id=:tenant_id AND user_id=:user_id"
+            ), {"task": task_id, **owner.sql_params()})).scalar_one_or_none()
+            if isinstance(frozen_params, str):
+                frozen_params = json.loads(frozen_params)
+            policy = (frozen_params or {}).get("quality_config")
+            if policy is not None:
+                from backend.services.engine.alpha_agent.quality_gate import require_admission
+                for factor in validated_factors:
+                    require_admission(factor["metadata"], policy)
 
             for factor in validated_factors:
                 inserted_factor = await session.execute(

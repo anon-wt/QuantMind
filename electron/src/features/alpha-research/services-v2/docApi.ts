@@ -101,6 +101,7 @@ export interface ResearchMiningBatchRequest {
   universe: string;
   loop_n: number;
   prediction_horizon?: number;
+  quality_config?: import('../components-v2/QualityPanel').QualityConfig;
   data_source?: 'qlib_bin' | 'parquet';
   freq?: 'day';
   datasets?: string[];

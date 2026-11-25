@@ -4,6 +4,7 @@ import { useAppSelector } from '../../../store';
 import { getSessionGeneration, registerSessionReset } from '../../../store/sessionBoundary';
 import { getSessionScopedStorageKey } from '../../../store/sessionScopedStorage';
 import { TaskConfig, UniverseId, UniverseInfo, type StatisticalMiningOptions, type GPMiningOptions } from '../types-v2';
+import { QualityPanel, QualitySummary, DEFAULT_QUALITY_CONFIG, qualityError, type QualityConfig } from './QualityPanel';
 import { GPOptionsPanel } from './GPOptionsPanel';
 import { StatisticalOptionsPanel, StatisticalOptionsSummary, effectiveStatisticalOptions, statisticalOptionsError } from './StatisticalOptionsPanel';
 import { getUniverses } from '../services-v2/api';
@@ -75,6 +76,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const [statisticalConfig, setStatisticalConfig] = useState<StatisticalMiningOptions | undefined>();
   const [gpConfig, setGPConfig] = useState<GPMiningOptions | undefined>();
   const [predictionHorizon, setPredictionHorizon] = useState(1);
+  const [qualityConfig, setQualityConfig] = useState<QualityConfig>({...DEFAULT_QUALITY_CONFIG});
   const [preview, setPreview] = useState<MiningPreview | null>(null);
   const [pendingConfig, setPendingConfig] = useState<TaskConfig | null>(null);
   const [previewing, setPreviewing] = useState(false);
@@ -88,6 +90,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       setAlgorithms([]);
       setAlgorithmsReady(false);
       setInput('');
+      setQualityConfig({...DEFAULT_QUALITY_CONFIG});
       setUniverse(preferredUniverse());
       selectAlgorithm('rdagent');
       setUseCustomMiningDirection(false);
@@ -140,6 +143,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       if (generation !== sessionGenerationRef.current) return;
       const available = res.data?.algorithms ?? [];
       setAlgorithms(available);
+      if (available[0]?.quality_defaults) setQualityConfig({...available[0].quality_defaults});
       setAlgorithmsReady(res.data?.available === true && available.length > 0);
       if (!available.some((item) => item.key === algorithmRef.current) && available[0]) {
         selectAlgorithm(available[0].key);
@@ -149,7 +153,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
   const invalidDateWindow = (
     !Number.isInteger(predictionHorizon) || predictionHorizon < 1 || predictionHorizon > 250 ||
-    (algorithm !== 'rdagent' && (!miningStart || !miningEnd))
+    (!miningStart || !miningEnd || !validStart || !validEnd || Boolean(qualityError(qualityConfig)))
     || Boolean(miningStart) !== Boolean(miningEnd)
     || (Boolean(miningStart && miningEnd) && miningStart > miningEnd)
     || Boolean(validStart) !== Boolean(validEnd)
@@ -170,6 +174,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     userInput: input.trim(),
     algorithm,
     predictionHorizon,
+    qualityConfig,
     statisticalConfig: algorithm === 'statistical' ? { ...effectiveStatisticalConfig, horizons: [predictionHorizon] } : undefined,
     gpConfig: algorithm === 'gp' && effectiveGPConfig ? { ...effectiveGPConfig, horizon: predictionHorizon } : undefined,
     autoMaterialize: false,
@@ -199,6 +204,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         ? { ...taskConfig, gpConfig: result.gp_config } : taskConfig.algorithm === 'statistical' && result.statistical_config
         ? { ...taskConfig, statisticalConfig: result.statistical_config }
         : taskConfig);
+      if (result.quality_config) setPendingConfig(current => current ? {...current, qualityConfig: result.quality_config} : current);
       setPreview(result);
     } catch (error) {
       if (generation !== getSessionGeneration()) return;
@@ -363,6 +369,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           </div>
         </div>
 
+        <QualityPanel value={qualityConfig} onChange={setQualityConfig} disabled={isRunning || previewing} />
         <div className="border-t border-slate-100 px-5 sm:px-6">
           <button
             type="button"
@@ -381,7 +388,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           <div id="mining-date-window" hidden={!windowExpanded} className="pb-4">
             <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,20rem),1fr))] gap-4">
               <fieldset className="min-w-0">
-                <legend className="mb-2 text-xs font-medium text-slate-600">挖掘区间{algorithm !== 'rdagent' ? '（必填）' : '（可选）'}</legend>
+                <legend className="mb-2 text-xs font-medium text-slate-600">挖掘区间（必填）</legend>
                 <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 text-xs text-slate-400">
                   <input aria-label={`${algorithm === 'gp' ? 'GP' : algorithm === 'statistical' ? '统计' : 'RD-Agent'}挖掘开始日期`} type="date" value={miningStart} onChange={(event) => setMiningStart(event.target.value)} disabled={isRunning} className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-100 disabled:opacity-50" />
                   <span>至</span>
@@ -389,7 +396,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 </div>
               </fieldset>
               <fieldset className="min-w-0">
-                <legend className="mb-2 text-xs font-medium text-slate-600">样本外检验 OOS（可选）</legend>
+                <legend className="mb-2 text-xs font-medium text-slate-600">独立样本外检验 OOS（入库必填）</legend>
                 <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 text-xs text-slate-400">
                   <input aria-label={`${algorithm === 'gp' ? 'GP' : algorithm === 'statistical' ? '统计' : 'RD-Agent'}验证开始日期`} type="date" value={validStart} onChange={(event) => setValidStart(event.target.value)} disabled={isRunning} className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-100 disabled:opacity-50" />
                   <span>至</span>
@@ -398,7 +405,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               </fieldset>
             </div>
             <p className={`mt-3 text-xs leading-5 ${invalidDateWindow ? 'text-amber-700' : 'text-slate-400'}`}>
-              {algorithm !== 'rdagent' ? '请填写完整挖掘区间。' : '留空使用服务器默认训练窗口。'}日期须从早到晚，OOS 必须位于挖掘区间之后。
+              请填写完整的挖掘和独立检验区间。日期须从早到晚，OOS 必须位于挖掘区间之后。
             </p>
           </div>
         </div>
@@ -406,7 +413,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         {algorithm === 'gp' && effectiveGPConfig && <GPOptionsPanel value={effectiveGPConfig} onChange={setGPConfig} disabled={isRunning || previewing} />}
         {algorithm === 'statistical' && effectiveStatisticalConfig && (
           <>
-            <StatisticalOptionsPanel key={sessionEpoch} value={effectiveStatisticalConfig} disabled={isRunning || previewing} onChange={setStatisticalConfig} />
+            <StatisticalOptionsPanel qualityManaged key={sessionEpoch} value={effectiveStatisticalConfig} disabled={isRunning || previewing} onChange={setStatisticalConfig} />
           </>
         )}
 
@@ -492,7 +499,8 @@ const PreviewDialog: React.FC<{
         {preview.algorithm.key === 'rdagent' && <><dt className="text-slate-500">演化轮数</dt><dd>{preview.loop_n}</dd></>}
         <dt className="text-slate-500">LLM</dt><dd>{preview.requires_llm ? '需要' : '不需要'}</dd>
       </dl>
-      {preview.algorithm.key === 'statistical' && preview.statistical_config && <StatisticalOptionsSummary value={preview.statistical_config} />}
+      {preview.quality_config && <QualitySummary value={preview.quality_config} />}
+      {preview.algorithm.key === 'statistical' && preview.statistical_config && <StatisticalOptionsSummary qualityManaged value={preview.statistical_config} />}
       {preview.algorithm.key === 'gp' && preview.gp_config && <p className="mt-3 text-xs text-slate-600">种群 {preview.gp_config.population_size} · 代数 {preview.gp_config.generations} · Top-{preview.gp_config.top_k} · 随机种子 {preview.gp_config.seed} · 复杂度惩罚 {preview.gp_config.complexity_penalty}</p>}
       <div className="mt-5 flex justify-end gap-2">
         <button type="button" onClick={onCancel} className="rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-600">返回修改</button>

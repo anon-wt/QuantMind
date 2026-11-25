@@ -110,6 +110,7 @@ export interface TaskConfig {
   statisticalConfig?: StatisticalMiningOptions;
   gpConfig?: GPMiningOptions;
   predictionHorizon?: number;
+  qualityConfig?: import('../components-v2/QualityPanel').QualityConfig;
   autoMaterialize?: boolean;
   miningStart?: string;
   miningEnd?: string;

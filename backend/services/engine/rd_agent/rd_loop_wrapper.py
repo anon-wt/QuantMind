@@ -236,6 +236,12 @@ class RDLoopWrapper:
 
             # 确保 daily_pv.h5 数据文件可用
             self._ensure_data_file(task_log_dir)
+            if os.getenv("QM_QUALITY_CONFIG"):
+                from .quality_inputs import bound_mining_inputs
+                import json
+                bound_mining_inputs(task_log_dir, os.environ["QM_MINING_WINDOW_START"],
+                                    os.environ["QM_MINING_WINDOW_END"],
+                                    json.loads(os.getenv("QM_QUALITY_SYMBOLS", "null")))
 
             # RD-Agent workspace / 数据目录对齐：设绝对路径 env 变量 + 切 cwd。
             # RD-Agent 的 FACTOR_COSTEER_SETTINGS.data_folder 与 workspace_path 默认用

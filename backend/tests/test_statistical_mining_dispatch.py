@@ -72,6 +72,8 @@ def request_body():
         "auto_materialize": False,
         "mining_start": "2020-01-01",
         "mining_end": "2021-12-31",
+        "valid_start": "2022-01-01",
+        "valid_end": "2022-12-31",
     }
 
 
@@ -173,6 +175,8 @@ def test_factor_results_keep_owner_task_evidence_and_fixed_expression():
         "universe": "csi300",
         "mining_start": "2020-01-01",
         "mining_end": "2021-12-31",
+        "valid_start": "2022-01-01",
+        "valid_end": "2022-12-31",
     }
     rows = runtime.result_factors("task-a", "a" * 64, params, {"candidates": [report]})
     assert len(rows) == 1
@@ -231,6 +235,8 @@ def controller(monkeypatch, tmp_path):
             "universe": "csi300",
             "mining_start": "2020-01-01",
             "mining_end": "2021-12-31",
+        "valid_start": "2022-01-01",
+        "valid_end": "2022-12-31",
         },
         "data_snapshot": {"status": "preparing", "qlib_provider_uri": "/public/qlib"},
     }

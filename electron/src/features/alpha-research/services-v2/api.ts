@@ -207,6 +207,7 @@ export interface MiningStartParams {
   statisticalConfig?: StatisticalMiningOptions;
   gpConfig?: GPMiningOptions;
   predictionHorizon?: number;
+  qualityConfig?: import('../components-v2/QualityPanel').QualityConfig;
   autoMaterialize?: boolean;
   miningStart?: string;
   miningEnd?: string;
@@ -225,6 +226,7 @@ export interface MiningStartParams {
 }
 
 export interface MiningPreview {
+  quality_config?: import('../components-v2/QualityPanel').QualityConfig;
   prediction_horizon?: number;
   label_spec?: { horizon: number; expression: string };
   algorithm: { key: string; name: string; version: string; uses_llm: boolean; uses_datasets: boolean };
@@ -277,6 +279,7 @@ function miningRequestBody(params: MiningStartParams) {
       ...params.statisticalConfig,
       algorithm: params.algorithm,
       prediction_horizon: params.predictionHorizon ?? 1,
+      quality_config: params.qualityConfig,
       ...(params.algorithm === 'gp' ? { gp_config: params.gpConfig } : {}),
       market: 'a_share',
       universe: params.universe ?? 'all_a',
@@ -292,6 +295,7 @@ function miningRequestBody(params: MiningStartParams) {
   return {
     algorithm: 'rdagent',
     prediction_horizon: params.predictionHorizon ?? 1,
+      quality_config: params.qualityConfig,
     market: params.market ?? 'a_share',
     universe: params.universe ?? 'all_a',
     loop_n: loopN,
@@ -338,6 +342,7 @@ function miningSubmissionResponse(data: any, params: MiningStartParams): ApiResp
       statisticalConfig: params.statisticalConfig,
       gpConfig: params.gpConfig,
       predictionHorizon: params.predictionHorizon ?? 1,
+      qualityConfig: params.qualityConfig,
       miningStart: params.miningStart,
       miningEnd: params.miningEnd,
       validStart: params.validStart,

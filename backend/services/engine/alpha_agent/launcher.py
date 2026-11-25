@@ -107,6 +107,7 @@ class EvolutionTask:
     data_source: str = ""
     datasets: tuple[str, ...] = ()
     prediction_horizon: int = 1
+    quality_config: dict | None = None
     mining_start: str | None = None
     mining_end: str | None = None
     valid_start: str | None = None
@@ -266,6 +267,7 @@ class AlphaAgentLauncher:
         tenant_id: str = "default",
         datasets: list[str] | None = None,
         prediction_horizon: int = 1,
+        quality_config: dict | None = None,
         mining_start: str | None = None,
         mining_end: str | None = None,
         valid_start: str | None = None,
@@ -289,6 +291,7 @@ class AlphaAgentLauncher:
             universe=universe, loop_n=loop_n, data_source=data_source or "",
             tenant_id=tenant_id, datasets=tuple(datasets or ()),
             prediction_horizon=prediction_horizon,
+            quality_config=quality_config,
             mining_start=mining_start, mining_end=mining_end,
             valid_start=valid_start, valid_end=valid_end,
         )
@@ -320,6 +323,15 @@ class AlphaAgentLauncher:
             # qlib_bin uses the default provider_uri
 
         seed_path = seed or self._default_seed_path()
+        if quality_config is not None:
+            from backend.services.engine.routers.alpha_agent import _resolve_instruments_for_universe
+            import qlib
+            qlib.init(provider_uri=provider_uri, region="cn", kernels=1)
+            instruments = _resolve_instruments_for_universe("CN", universe, tenant_id=tenant_id, user_id=user_id)
+            if isinstance(instruments, dict):
+                from qlib.data import D
+                instruments = list(D.list_instruments(instruments, start_time=mining_start, end_time=valid_end, as_list=True))
+            task.universe_symbols = list(instruments)
 
         asyncio.ensure_future(
             self._run_evolution(
@@ -398,6 +410,7 @@ class AlphaAgentLauncher:
             data_source=data_source or "",
             datasets=task_datasets,
             prediction_horizon=params_snapshot.get("prediction_horizon", 1),
+            quality_config=params_snapshot.get("quality_config"),
             universe_symbols=source_snapshot.get("universe_symbols"),
             **task_windows,
             status=TaskStatus.QUEUED,
@@ -543,6 +556,7 @@ class AlphaAgentLauncher:
         task.valid_start = params_snapshot.get("valid_start")
         task.valid_end = params_snapshot.get("valid_end")
         task.prediction_horizon = params_snapshot.get("prediction_horizon", 1)
+        task.quality_config = params_snapshot.get("quality_config")
         source_snapshot = record.get("data_snapshot") or {}
         if isinstance(source_snapshot, str):
             source_snapshot = json.loads(source_snapshot)
@@ -641,6 +655,7 @@ class AlphaAgentLauncher:
             "data_source": task.data_source,
             "datasets": list(task.datasets),
             "prediction_horizon": task.prediction_horizon,
+            "quality_config": task.quality_config,
             "mining_start": task.mining_start,
             "mining_end": task.mining_end,
             "valid_start": task.valid_start,
@@ -724,6 +739,7 @@ class AlphaAgentLauncher:
                 "data_source": task.data_source,
                 "datasets": list(task.datasets),
                 "prediction_horizon": task.prediction_horizon,
+                "quality_config": task.quality_config,
                 "mining_start": task.mining_start,
                 "mining_end": task.mining_end,
                 "valid_start": task.valid_start,
@@ -740,6 +756,7 @@ class AlphaAgentLauncher:
                 "timeline": task.timeline,
                 "token_usage": task.token_usage,
                 "mining_progress": task.mining_progress,
+                "result": task.result,
             }
             with open(state_file, "w") as f:
                 json.dump(data, f, ensure_ascii=False, default=str)
@@ -768,6 +785,7 @@ class AlphaAgentLauncher:
                         mining_start=data.get("mining_start"),
                         mining_end=data.get("mining_end"),
                         valid_start=data.get("valid_start"),
+                        quality_config=data.get("quality_config"),
                         valid_end=data.get("valid_end"),
                         universe=data.get("universe", "csi300"),
                         status=TaskStatus(data.get("status", "pending")),
@@ -778,6 +796,7 @@ class AlphaAgentLauncher:
                         current_loop=data.get("current_loop", 0),
                         created_at=data.get("created_at", time.time()),
                         error_message=data.get("error_message"),
+                        result=data.get("result"),
                         timeline=data.get("timeline", []),
                         token_usage=data.get("token_usage", {}),
                         mining_progress=data.get("mining_progress", {}),
@@ -891,7 +910,17 @@ class AlphaAgentLauncher:
         from backend.services.engine.alpha_agent.label_contract import horizon
         from backend.services.engine.alpha_agent.mining_windows import build_mining_window_env
 
-        env.update(build_mining_window_env(task.mining_start, task.mining_end, task.valid_start, task.valid_end))
+        if task.quality_config is not None:
+            from .quality_gate import QualityConfig
+            env["QM_QUALITY_CONFIG"] = json.dumps(QualityConfig.model_validate(task.quality_config).model_dump())
+            # Search sees only mining folds. Holdout is read once after search.
+            env.update(build_mining_window_env(task.mining_start, task.mining_end, None, None))
+            env["QM_VALIDATION_WINDOW_START"] = task.valid_start or ""
+            env["QM_VALIDATION_WINDOW_END"] = task.valid_end or ""
+            if task.universe_symbols:
+                env["QM_QUALITY_SYMBOLS"] = json.dumps(task.universe_symbols)
+        else:
+            env.update(build_mining_window_env(task.mining_start, task.mining_end, task.valid_start, task.valid_end))
 
         env["QM_PREDICTION_HORIZON"] = str(horizon(task.prediction_horizon))
         return env

@@ -1,3 +1,4 @@
+import { QualityAuditView } from '../components-v2/QualityPanel';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertCircle, ArchiveRestore, ClipboardList, FileText, FileX, Loader2, RefreshCw, Square } from 'lucide-react';
 import { useAppSelector } from '../../../store';
@@ -540,6 +541,7 @@ export const TaskCenterPage: React.FC = () => {
           <CardContent className="space-y-4">
             <DirectionSelectionEvidence value={details.directionSelection} />
             <div className="text-xs text-muted-foreground">{details.progress || '任务状态已加载'}{details.error ? ` · ${details.error}` : ''}</div>
+            <QualityAuditView audit={details.statisticalResult?.quality_audit} />
             {details.algorithm === 'gp' && details.statisticalResult && <GPResult result={details.statisticalResult} />}
             {details.algorithm === 'statistical' && (
               <div>

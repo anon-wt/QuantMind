@@ -79,13 +79,15 @@ export function statisticalOptionsError(value: StatisticalMiningOptions): string
   return null;
 }
 
+const admissionFields = new Set(['min_names_per_day', 'min_valid_days', 'fdr_q', 'oos_min_ratio', 'oos_min_days', 'stability_folds', 'min_fold_sign_consistency', 'min_fold_days', 'require_fdr', 'require_stability']);
 const inputClass = 'w-full rounded border border-slate-200 bg-white px-2 py-1 text-slate-700 disabled:opacity-50';
 
 export const StatisticalOptionsPanel: React.FC<{
   value: StatisticalMiningOptions;
   disabled: boolean;
+  qualityManaged?: boolean;
   onChange: (value: StatisticalMiningOptions) => void;
-}> = ({ value, disabled, onChange }) => {
+}> = ({ value, disabled, onChange, qualityManaged = false }) => {
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const error = statisticalOptionsError(value);
   const setDraft = (key: string, text: string) => setDrafts((current) => ({ ...current, [key]: text }));
@@ -99,7 +101,7 @@ export const StatisticalOptionsPanel: React.FC<{
               <option value="none">不进行中性化</option><option value="industry">行业中性</option><option value="industry_size">行业与市值中性</option>
             </select>
           </label>
-          {numberFields.map((field) => (
+          {numberFields.filter(f => !qualityManaged || !admissionFields.has(f.key)).map((field) => (
             <label key={field.key} className="space-y-1 text-slate-500">{field.label}
               <input aria-label={field.label} className={inputClass} type="number" min={field.min} max={field.max} step={field.step}
                 placeholder={field.key === 'net_ic_cost_rate' ? '使用算法默认成本' : '使用服务器默认值'}
@@ -112,11 +114,11 @@ export const StatisticalOptionsPanel: React.FC<{
           ))}
         </div>
         <div className="flex flex-wrap gap-3">
-          {booleanFields.map((field) => <label key={field.key} className="flex items-center gap-1 text-slate-600">
+          {booleanFields.filter(f => !qualityManaged || !admissionFields.has(f.key)).map((field) => <label key={field.key} className="flex items-center gap-1 text-slate-600">
             <input type="checkbox" checked={value[field.key] ?? true} onChange={(event) => onChange({ ...value, [field.key]: event.target.checked })} />{field.label}
           </label>)}
         </div>
-        <p className="text-slate-400">成本率以小数填写，例如 0.001 为千分之一；留空使用算法默认成本。OOS 门槛仅在填写检验区间后应用。</p>
+        <p className="text-slate-400">成本率以小数填写，例如 0.001 为千分之一；留空使用算法默认成本。入库门槛由统一因子质量标准控制。</p>
         <div className="border-t border-slate-100 pt-3">
           <p className="mb-2 font-semibold text-slate-600">可交易性过滤</p>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -142,14 +144,14 @@ export const StatisticalOptionsPanel: React.FC<{
   );
 };
 
-export const StatisticalOptionsSummary: React.FC<{ value: StatisticalMiningOptions }> = ({ value }) => (
+export const StatisticalOptionsSummary: React.FC<{ value: StatisticalMiningOptions; qualityManaged?: boolean }> = ({ value, qualityManaged = false }) => (
   <details className="mt-3 rounded-lg border border-slate-200 p-3 text-xs text-slate-600" open>
     <summary className="cursor-pointer font-semibold">实际统计参数</summary>
     <dl className="mt-2 grid grid-cols-[1fr_1fr] gap-2">
       <dt>预测周期（交易日）</dt><dd>{value.horizons?.join('、') || '默认'}</dd>
       <dt>中性化</dt><dd>{({ none: '无', industry: '行业', industry_size: '行业与市值' })[value.neutralize ?? 'industry']}</dd>
-      {numberFields.map((field) => <React.Fragment key={field.key}><dt>{field.label}</dt><dd>{value[field.key] ?? '算法默认值'}</dd></React.Fragment>)}
-      {booleanFields.map((field) => <React.Fragment key={field.key}><dt>{field.label}</dt><dd>{value[field.key] ? '开启' : '关闭'}</dd></React.Fragment>)}
+      {numberFields.filter(f => !qualityManaged || !admissionFields.has(f.key)).map((field) => <React.Fragment key={field.key}><dt>{field.label}</dt><dd>{value[field.key] ?? '算法默认值'}</dd></React.Fragment>)}
+      {booleanFields.filter(f => !qualityManaged || !admissionFields.has(f.key)).map((field) => <React.Fragment key={field.key}><dt>{field.label}</dt><dd>{value[field.key] ? '开启' : '关闭'}</dd></React.Fragment>)}
       {tradabilityFields.map((field) => <React.Fragment key={field.key}><dt>{field.label}</dt><dd>{value.tradability?.[field.key] ?? '默认'}</dd></React.Fragment>)}
       <dt>剔除停牌和无成交</dt><dd>{value.tradability?.exclude_suspended ? '开启' : '关闭'}</dd>
       <dt>剔除收盘涨跌停</dt><dd>{value.tradability?.exclude_limit_locked ? '开启' : '关闭'}</dd>

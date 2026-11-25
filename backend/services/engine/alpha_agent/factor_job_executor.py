@@ -198,6 +198,9 @@ def execute_factor_backtest(
     if spec != label_spec(spec.get("horizon")):
         raise ValueError("Frozen factor label specification is invalid")
     prediction_horizon = spec["horizon"]
+    direction = request.get("factor_direction", 1)
+    if type(direction) is not int or direction not in (-1, 1):
+        raise ValueError("Frozen factor direction is invalid")
 
     validation_context = request.get("validation_context")
     if validation_context is not None:
@@ -414,7 +417,7 @@ def execute_factor_backtest(
         in_window = (dates >= pd.Timestamp(start)) & (dates <= pd.Timestamp(end))
         frame = frame.iloc[in_window]
         values = values[in_window]
-    factors = pd.Series(values, index=frame.index, name="factor")
+    factors = pd.Series(values, index=frame.index, name="factor") * direction
     forward_returns = build_labels(frame["$close"], prediction_horizon, symbol_level=0)
     common = factors.index.intersection(forward_returns.index)
     if len(common) < 100:
@@ -491,6 +494,7 @@ def execute_factor_backtest(
                     "market": "a_share",
                     "universe": universe,
                     "values": factor_cost_series,
+                    "close": _date_first(frame["$close"]),
                     "forward_returns": return_cost_series,
                     "factor_revision_no": factor_revision_no,
                 }
@@ -503,6 +507,7 @@ def execute_factor_backtest(
         "factor_id": factor_id,
         "factor_revision_no": factor_revision_no,
         "label_spec": spec,
+        "factor_direction": direction,
         "panel_input_evidence": evidence,
         "universe": universe,
         "data_source": "qlib_bin",

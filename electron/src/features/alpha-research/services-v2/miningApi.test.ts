@@ -131,3 +131,11 @@ describe('factor mining API', () => {
     expect(options).toBeUndefined();
   });
 });
+
+import { DEFAULT_QUALITY_CONFIG } from '../components-v2/QualityPanel';
+it.each(['rdagent', 'statistical', 'gp'] as const)('freezes user quality thresholds for %s', async algorithm => {
+  client.post.mockResolvedValue({data:{data:{algorithm:{key:algorithm}}}});
+  const qualityConfig = {...DEFAULT_QUALITY_CONFIG, min_abs_rank_ic:0.04, min_abs_t:4};
+  await previewMining({direction:'test', algorithm, qualityConfig});
+  expect(client.post.mock.calls.at(-1)?.[1]).toMatchObject({quality_config:qualityConfig});
+});

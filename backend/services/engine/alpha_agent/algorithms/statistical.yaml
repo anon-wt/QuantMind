@@ -12,7 +12,7 @@ desc: >-
   相关性去重（被拒者不占席、后续候选递补）→ IC 加权合成因子，因子带真实
   IC/ICIR/分组单调性/逐折 IC/选择分；落库身份走任务指纹（同配置重跑
   幂等刷新）；样本外验证通过独立耐久验证任务显式提交。
-version: "quantmind-statistical/2.1"
+version: "quantmind-statistical/2.2"
 enabled: true
 tags: [statistical, no-llm]
 markets: [a_share]

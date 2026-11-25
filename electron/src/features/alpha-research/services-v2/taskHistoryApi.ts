@@ -37,6 +37,7 @@ export interface MiningTaskHistoryPage {
 }
 
 export interface StatisticalMiningResult {
+  quality_audit?: import('../components-v2/QualityPanel').QualityAudit | null;
   prediction_horizon?: number;
   label_spec?: { horizon: number; expression: string };
   gp_search?: {

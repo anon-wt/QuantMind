@@ -60,6 +60,11 @@ async def persist_factors(factors: list[dict], task_id: str, user_id: str, marke
             if f.get("feedback"):
                 metadata["feedback"] = f["feedback"][:2000]
 
+            if os.getenv("QM_QUALITY_CONFIG"):
+                from backend.services.engine.alpha_agent.quality_gate import require_admission
+                metadata["quality_admission"] = f.get("quality_admission")
+                require_admission(metadata, json.loads(os.environ["QM_QUALITY_CONFIG"]))
+
             await persistence.save_factor(
                 factor_id=factor_id,
                 factor_name=f["name"],
@@ -430,12 +435,36 @@ def main():
             RDAgentFactorPersistence,
         )
 
+        quality_audit = None
+        if os.getenv("QM_QUALITY_CONFIG"):
+            from backend.services.engine.alpha_agent.quality_runtime import gate_rd_factors
+            quality_params = {
+                "quality_config": json.loads(os.environ["QM_QUALITY_CONFIG"]),
+                "prediction_horizon": int(os.getenv("QM_PREDICTION_HORIZON", "1")),
+                "mining_start": os.environ["QM_MINING_WINDOW_START"],
+                "mining_end": os.environ["QM_MINING_WINDOW_END"],
+                "valid_start": os.environ["QM_VALIDATION_WINDOW_START"],
+                "valid_end": os.environ["QM_VALIDATION_WINDOW_END"],
+            }
+            quality_audit = gate_rd_factors(
+                factors, quality_params,
+                tenant_id=os.getenv("QM_FACTOR_TENANT_ID", "default"),
+                user_id=args.user_id, universe=args.universe,
+                symbols=json.loads(os.getenv("QM_QUALITY_SYMBOLS", "null")),
+            )
+            for factor in factors:
+                factor["quality_admission"] = quality_audit["candidates"][factor["name"]]
+
         async def _persist_and_metrics() -> int:
             p = RDAgentFactorPersistence()
             await p.ensure_tables()
             saved = 0
             for f in factors:
                 try:
+                    admission = f.get("quality_admission")
+                    if quality_audit is not None and not (admission or {}).get("passed"):
+                        logger.info("Rejected factor %s: %s", f["name"], (admission or {}).get("reasons"))
+                        continue
                     fid = hashlib.md5(f"{args.task_id}:{f['name']}".encode()).hexdigest()
                     metadata: dict = {
                         "source": "rd_agent",
@@ -457,7 +486,14 @@ def main():
                     status = "pending"
                     ic_value = None
                     rank_ic = None
-                    if Path(data_path).exists() and f.get("code"):
+                    if admission is not None:
+                        from backend.services.engine.alpha_agent.quality_gate import require_admission
+                        metadata["quality_admission"] = admission
+                        require_admission(metadata, quality_params["quality_config"])
+                        status = "completed"
+                        ic_value = rank_ic = admission["oos"]["rank_ic_mean"]
+                        metadata.update(icir=admission["oos"]["icir"], rank_icir=admission["oos"]["icir"])
+                    elif Path(data_path).exists() and f.get("code"):
                         metrics = await asyncio.to_thread(
                             compute_factor_ic, f["code"], data_path, ic_start, ic_end
                         )
@@ -489,6 +525,7 @@ def main():
                         universe=args.universe,
                         factor_formulation=f.get("formulation", ""),
                         date_range=(f"{os.getenv('QM_MINING_WINDOW_START')}/{os.getenv('QM_MINING_WINDOW_END')}" if os.getenv('QM_MINING_WINDOW_START') else f"{ic_start}/{ic_end}"),
+                        quality_config=quality_params["quality_config"] if quality_audit is not None else None,
                     )
                     await p.update_factor_metrics(
                         factor_id=fid,
@@ -512,6 +549,8 @@ def main():
             "market": args.market,
             "total_factors": len(factors),
             "persisted_factors": count,
+            "quality_audit": quality_audit,
+            "algorithm": "rdagent",
             "elapsed_seconds": elapsed,
         }, indent=2))
 

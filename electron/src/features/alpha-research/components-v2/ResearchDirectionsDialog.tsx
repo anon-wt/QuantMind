@@ -131,6 +131,7 @@ export const ResearchDirectionsDialog: React.FC<ResearchDirectionsDialogProps> =
       universe,
       loop_n: rounds,
       prediction_horizon: config.predictionHorizon ?? 1,
+      quality_config: config.qualityConfig,
       data_source: config.dataSource ?? 'qlib_bin',
       freq: 'day' as const,
       datasets: config.datasets,

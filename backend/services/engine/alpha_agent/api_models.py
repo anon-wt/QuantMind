@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .statistical.configuration import StatisticalOverrides
 from .gp.configuration import GPConfig
+from .quality_gate import QualityConfig
 
 
 class MiningSubmitRequest(StatisticalOverrides):
@@ -20,6 +21,7 @@ class MiningSubmitRequest(StatisticalOverrides):
     algorithm: Literal["rdagent", "statistical", "gp"] | None = None
     gp_config: GPConfig | None = None
     prediction_horizon: int | None = Field(None, ge=1, le=250, strict=True)
+    quality_config: QualityConfig | None = None
     market: Literal["a_share"] | None = None
     universe: str | None = Field(None, min_length=1, max_length=64)
     loop_n: int | None = Field(None, ge=1, le=20, strict=True)
@@ -115,6 +117,7 @@ class DirectionBatchDispatchRequest(BaseModel):
     market: Literal["a_share"] = "a_share"
     universe: str = Field(default="all_a", min_length=1, max_length=128)
     prediction_horizon: int = Field(1, ge=1, le=250, strict=True)
+    quality_config: QualityConfig = Field(default_factory=QualityConfig)
     loop_n: int = Field(default=3, ge=1, le=20, strict=True)
     data_source: Literal["", "qlib_bin", "parquet"] = ""
     freq: Literal["day"] = "day"

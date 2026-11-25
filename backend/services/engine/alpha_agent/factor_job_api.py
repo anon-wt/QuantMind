@@ -19,6 +19,7 @@ from backend.services.engine.auth_context import get_authenticated_identity
 from backend.shared.secret_redaction import redact_data, redact_text
 from backend.shared.utc_datetime import to_utc_iso
 from .label_contract import factor_label
+from .quality_gate import factor_direction
 from backend.services.engine.alpha_agent.factor_jobs import (
     AlphaFactorJobPersistence,
     FactorJobIdempotencyConflict,
@@ -386,6 +387,7 @@ def _public(job: dict) -> dict:
             "cost_model",
             "validation_context",
             "label_spec",
+            "factor_direction",
         )
         if key in request
     }
@@ -556,6 +558,7 @@ async def submit_factor_backtest(
         "factor_code_sha256": hashlib.sha256(factor_code.encode("utf-8")).hexdigest(),
         "factor_revision_no": factor_revision_no,
         "label_spec": selected_label,
+        "factor_direction": factor_direction(factor),
         "factor_kind": kind,
         "universe": universe,
         "universe_symbols": universe_symbols,
@@ -1303,6 +1306,7 @@ async def submit_factor_batch(
                 ).hexdigest(),
                 "factor_revision_no": factor_revision_no,
                 "label_spec": factor_label(factor),
+                "factor_direction": factor_direction(factor),
                 "factor_kind": factor_kind,
                 "universe": payload.universe,
                 "universe_symbols": universe_symbols,

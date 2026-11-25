@@ -302,7 +302,8 @@ async def start_evolution(
         values.update(payload.model_dump(exclude_none=True))
     from backend.services.engine.alpha_agent.label_contract import normalize_request
     try:
-        values = normalize_request(values)
+        from backend.services.engine.alpha_agent.quality_gate import normalize_quality
+        values = normalize_quality(normalize_request(values))
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     from backend.services.engine.alpha_agent.algorithm_registry import (
@@ -401,6 +402,7 @@ async def start_evolution(
             tenant_id=auth_tenant_id,
             datasets=values.get("datasets"),
             prediction_horizon=values["prediction_horizon"],
+            quality_config=values["quality_config"],
             **{key: values.get(key) for key in (
                 "mining_start", "mining_end", "valid_start", "valid_end"
             )},
@@ -1040,6 +1042,8 @@ async def list_mining_algorithms():
         statistical_config_payload,
     )
 
+    from backend.services.engine.alpha_agent.quality_gate import QualityConfig
+
     algorithms = []
     for item in list_algorithms():
         if item.get("valid") is True:
@@ -1069,6 +1073,7 @@ async def list_mining_algorithms():
                     "supports_experience_memory": item.get("key") in {"rdagent", "statistical"},
                     "supports_variant_ledger": item.get("key") == "statistical",
                     **statistical_options,
+                    "quality_defaults": QualityConfig().model_dump(),
                     **({"gp_defaults": GPConfig().model_dump()} if item.get("key") == "gp" else {}),
                 }
             )
@@ -1140,7 +1145,8 @@ async def preview_mining(request: Request, payload: dict):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     from backend.services.engine.alpha_agent.label_contract import normalize_request, label_spec
     try:
-        values = normalize_request(parsed.model_dump(exclude_none=True))
+        from backend.services.engine.alpha_agent.quality_gate import normalize_quality
+        values = normalize_quality(normalize_request(parsed.model_dump(exclude_none=True)))
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     algorithm_key = values.get("algorithm", "rdagent")
@@ -1188,9 +1194,11 @@ async def preview_mining(request: Request, payload: dict):
         window_env = build_mining_window_env(
             values.get("mining_start"),
             values.get("mining_end"),
-            values.get("valid_start"),
-            values.get("valid_end"),
+            None if algorithm.key == "rdagent" else values.get("valid_start"),
+            None if algorithm.key == "rdagent" else values.get("valid_end"),
         )
+        window_env["QM_VALIDATION_WINDOW_START"] = values["valid_start"]
+        window_env["QM_VALIDATION_WINDOW_END"] = values["valid_end"]
         # OSS-ADAPT：远端 admission 快照/窗口校验（mining_remote）跳过，单容器本地执行。
     except (AlgorithmError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1289,6 +1297,7 @@ async def preview_mining(request: Request, payload: dict):
             "requires_llm": algorithm.uses_llm,
             "statistical_config": statistical_config,
             "prediction_horizon": values["prediction_horizon"],
+            "quality_config": values["quality_config"],
             "label_spec": label_spec(values["prediction_horizon"]),
             "gp_config": GPConfig.model_validate(values.get("gp_config") or {}).model_dump() if algorithm.key == "gp" else None,
         },
@@ -1477,6 +1486,12 @@ async def _dispatch_mining_directions(payload, request: Request, *, selection_ba
         # OSS-ADAPT：单容器无 mining_remote admission 快照，data_snapshot 置空；
         # 落库后由 engine 内队列泵（factor-mining-queue）本地执行。
         request_parameters["prediction_horizon"] = payload.prediction_horizon
+        from backend.services.engine.alpha_agent.quality_gate import normalize_quality
+        try:
+            normalized_quality = normalize_quality({**execution_options, "quality_config": payload.quality_config.model_dump()})
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        request_parameters["quality_config"] = normalized_quality["quality_config"]
         parameters = dict(request_parameters)
         from backend.services.engine.alpha_agent.label_contract import label_spec
         parameters["prediction_horizon"] = payload.prediction_horizon
@@ -1844,7 +1859,7 @@ async def restore_mining_task(task_id: str, request: Request):
 @router.get("/tasks/{task_id}/result")
 async def get_task_result(task_id: str, request: Request):
     """Return both algorithm output and persisted factors in the verified owner scope."""
-    await _require_owned_task(task_id, request)
+    owned = await _require_owned_task(task_id, request)
     user_id, tenant_id = get_authenticated_identity(request)
     from backend.services.engine.qlib_app.services.rd_agent_persistence import (
         AlphaMiningTaskPersistence,
@@ -1855,10 +1870,13 @@ async def get_task_result(task_id: str, request: Request):
     task = await store.get_for_owner_with_spec(
         task_id, tenant_id=tenant_id, user_id=user_id
     )
-    if task is None:
+    if task is None and owned.get("algorithm") != "rdagent":
         raise HTTPException(status_code=404, detail="Mining task not found")
+    task = task or owned
     algorithm = task.get("algorithm") or "rdagent"
     result = await store.get_result(task_id, tenant_id=tenant_id, user_id=user_id)
+    if result is None and algorithm == "rdagent":
+        result = owned.get("result")
     persisted_factors = await persistence.list_factors(
         user_id=user_id,
         task_id=task_id,

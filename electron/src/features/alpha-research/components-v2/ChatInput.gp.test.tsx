@@ -1,6 +1,6 @@
 import React from 'react';
 import { Provider } from 'react-redux';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import store from '../../../store';
 import { ChatInput } from './ChatInput';
@@ -30,20 +30,23 @@ it('requires dates and submits reviewed GP parameters without an LLM prompt', as
     algorithm: { key: 'gp', name: 'GP 遗传编程' }, gp_config: { ...defaults, seed: 7, horizon: 5 }, prediction_horizon: 5,
     window: { mode: 'server_default' }, datasets: {},
   });
-  render(<Provider store={store}><ChatInput onSubmit={onSubmit} onPreview={onPreview} /></Provider>);
+  await act(async () => { render(<Provider store={store}><ChatInput onSubmit={onSubmit} onPreview={onPreview} /></Provider>); });
   fireEvent.click(await screen.findByRole('button', { name: 'GP 遗传编程' }));
   expect(screen.queryByRole('textbox')).toBeNull();
   const submit = screen.getByTitle('发送 (Enter)');
   expect(submit).toHaveProperty('disabled', true);
   fireEvent.change(screen.getByLabelText('GP挖掘开始日期'), { target: { value: '2023-01-01' } });
   fireEvent.change(screen.getByLabelText('GP挖掘结束日期'), { target: { value: '2023-12-31' } });
+  fireEvent.change(screen.getByLabelText('GP验证开始日期'), { target: { value: '2024-01-01' } });
+  fireEvent.change(screen.getByLabelText('GP验证结束日期'), { target: { value: '2024-12-31' } });
   fireEvent.change(screen.getByLabelText('GP 随机种子'), { target: { value: '7' } });
   fireEvent.change(screen.getByLabelText('统一预测周期'), { target: { value: '5' } });
+  fireEvent.change(screen.getByLabelText('最低方向调整 RankIC'), { target: { value: '0.04' } });
   expect(submit).toHaveProperty('disabled', false);
   fireEvent.click(submit);
   await screen.findByRole('dialog');
   expect(onPreview).toHaveBeenCalledWith(expect.objectContaining({ algorithm: 'gp', predictionHorizon: 5, gpConfig: { ...defaults, seed: 7, horizon: 5 } }));
   expect(onSubmit).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button', { name: '确认并开始' }));
-  await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ algorithm: 'gp', predictionHorizon: 5, autoMaterialize: false, gpConfig: { ...defaults, seed: 7, horizon: 5 } })));
+  await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ algorithm: 'gp', predictionHorizon: 5, qualityConfig: expect.objectContaining({min_abs_rank_ic:0.04}), autoMaterialize: false, gpConfig: { ...defaults, seed: 7, horizon: 5 } })));
 });
