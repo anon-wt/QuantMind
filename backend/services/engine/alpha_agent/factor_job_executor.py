@@ -236,7 +236,8 @@ def execute_factor_backtest(
 
         candidate = trusted_statistical_candidate(
             {
-                "algorithm": "statistical",
+                "algorithm": request.get("mining_algorithm", "statistical"),
+                "gp_expression": request.get("gp_expression"),
                 "candidate_key": request.get("statistical_candidate_key"),
                 "evidence": request.get("statistical_evidence"),
             },
@@ -605,7 +606,8 @@ def execute_factor_materialization(
 
         candidate = trusted_statistical_candidate(
             {
-                "algorithm": "statistical",
+                "algorithm": request.get("mining_algorithm", "statistical"),
+                "gp_expression": request.get("gp_expression"),
                 "candidate_key": request.get("statistical_candidate_key"),
                 "evidence": request.get("statistical_evidence"),
             },

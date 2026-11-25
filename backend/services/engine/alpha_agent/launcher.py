@@ -499,7 +499,7 @@ class AlphaAgentLauncher:
             raise ValueError("Persisted task owner is not canonical")
         if record.get("market") != "a_share":
             raise ValueError("Only A-share mining is supported")
-        if record.get("algorithm") == "statistical":
+        if record.get("algorithm") in {"statistical", "gp"}:
             from backend.services.engine.alpha_agent.statistical_runtime import (
                 run_statistical,
             )

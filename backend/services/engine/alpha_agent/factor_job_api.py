@@ -562,6 +562,8 @@ async def submit_factor_backtest(
     }
     if kind == "qlib_expression":
         request_snapshot.update(
+            mining_algorithm=factor["metadata"].get("algorithm", "statistical"),
+            gp_expression=factor["metadata"].get("gp_expression"),
             statistical_candidate_key=factor["metadata"]["candidate_key"],
             statistical_evidence=factor["metadata"].get("evidence"),
         )
@@ -643,7 +645,7 @@ async def submit_factor_materialization(
             )
             if (
                 source_task is None
-                or source_task.get("algorithm") != "statistical"
+                or source_task.get("algorithm") != metadata.get("algorithm")
                 or source_task.get("status") != "completed"
             ):
                 raise ValueError("Statistical factor source task is unavailable")
@@ -745,6 +747,8 @@ async def submit_factor_materialization(
         "factor_kind": factor_kind,
         "price_source": "quantdb_daily_forward",
         "statistical_candidate_key": candidate_key,
+        "mining_algorithm": metadata.get("algorithm", "statistical"),
+        "gp_expression": metadata.get("gp_expression"),
         "statistical_evidence": metadata.get("evidence")
         if candidate is not None
         else None,
@@ -1306,6 +1310,8 @@ async def submit_factor_batch(
                 item["validation_context"] = _validation_context(factor, start, end)
             if factor_kind == "qlib_expression":
                 item.update(
+                    mining_algorithm=factor["metadata"].get("algorithm", "statistical"),
+                    gp_expression=factor["metadata"].get("gp_expression"),
                     statistical_candidate_key=factor["metadata"]["candidate_key"],
                     statistical_evidence=factor["metadata"].get("evidence"),
                 )

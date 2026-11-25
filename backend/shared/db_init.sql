@@ -2748,7 +2748,7 @@ CREATE TABLE IF NOT EXISTS alpha_mining_task_specs (
     user_id TEXT NOT NULL CHECK (btrim(user_id) <> ''),
     task_id TEXT NOT NULL,
     schema_version INT NOT NULL CHECK (schema_version = 1),
-    algorithm TEXT NOT NULL CHECK (algorithm IN ('rdagent', 'statistical')),
+    algorithm TEXT NOT NULL CHECK (algorithm IN ('rdagent', 'statistical', 'gp')),
     algorithm_version TEXT NOT NULL CHECK (btrim(algorithm_version) <> ''),
     request_key TEXT CHECK (
         request_key IS NULL OR (length(request_key) BETWEEN 1 AND 128 AND btrim(request_key) <> '')
@@ -2762,6 +2762,13 @@ CREATE TABLE IF NOT EXISTS alpha_mining_task_specs (
     FOREIGN KEY (tenant_id, user_id, task_id)
         REFERENCES alpha_mining_tasks (tenant_id, user_id, task_id)
 );
+-- GP uses the existing durable task specification; converge existing installs too.
+ALTER TABLE alpha_mining_task_specs
+    DROP CONSTRAINT IF EXISTS alpha_mining_task_specs_algorithm_check;
+ALTER TABLE alpha_mining_task_specs
+    ADD CONSTRAINT alpha_mining_task_specs_algorithm_check
+    CHECK (algorithm IN ('rdagent', 'statistical', 'gp'));
+
 CREATE TABLE IF NOT EXISTS alpha_mining_request_keys (
     tenant_id TEXT NOT NULL CHECK (btrim(tenant_id) <> ''),
     user_id TEXT NOT NULL CHECK (btrim(user_id) <> ''),

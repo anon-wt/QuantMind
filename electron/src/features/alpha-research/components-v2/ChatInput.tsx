@@ -3,7 +3,8 @@ import { Send, Square, Compass, WandSparkles, BookOpen, CalendarDays, ChevronDow
 import { useAppSelector } from '../../../store';
 import { getSessionGeneration, registerSessionReset } from '../../../store/sessionBoundary';
 import { getSessionScopedStorageKey } from '../../../store/sessionScopedStorage';
-import { TaskConfig, UniverseId, UniverseInfo, type StatisticalMiningOptions } from '../types-v2';
+import { TaskConfig, UniverseId, UniverseInfo, type StatisticalMiningOptions, type GPMiningOptions } from '../types-v2';
+import { GPOptionsPanel } from './GPOptionsPanel';
 import { StatisticalOptionsPanel, StatisticalOptionsSummary, effectiveStatisticalOptions, statisticalOptionsError } from './StatisticalOptionsPanel';
 import { getUniverses } from '../services-v2/api';
 import type { MiningPreview } from '../services-v2/api';
@@ -59,19 +60,20 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const [universes, setUniverses] = useState<UniverseInfo[]>([]);
   const [algorithms, setAlgorithms] = useState<MiningAlgorithmOption[]>([]);
   const [algorithmsReady, setAlgorithmsReady] = useState(false);
-  const [algorithm, setAlgorithm] = useState<'rdagent' | 'statistical'>('rdagent');
+  const [algorithm, setAlgorithm] = useState<'rdagent' | 'statistical' | 'gp'>('rdagent');
   const [windowExpanded, setWindowExpanded] = useState(false);
-  const algorithmRef = useRef<'rdagent' | 'statistical'>('rdagent');
-  const selectAlgorithm = (value: 'rdagent' | 'statistical') => {
+  const algorithmRef = useRef<'rdagent' | 'statistical' | 'gp'>('rdagent');
+  const selectAlgorithm = (value: 'rdagent' | 'statistical' | 'gp') => {
     algorithmRef.current = value;
     setAlgorithm(value);
-    setWindowExpanded(value === 'statistical');
+    setWindowExpanded(value !== 'rdagent');
   };
   const [miningStart, setMiningStart] = useState('');
   const [miningEnd, setMiningEnd] = useState('');
   const [validStart, setValidStart] = useState('');
   const [validEnd, setValidEnd] = useState('');
   const [statisticalConfig, setStatisticalConfig] = useState<StatisticalMiningOptions | undefined>();
+  const [gpConfig, setGPConfig] = useState<GPMiningOptions | undefined>();
   const [preview, setPreview] = useState<MiningPreview | null>(null);
   const [pendingConfig, setPendingConfig] = useState<TaskConfig | null>(null);
   const [previewing, setPreviewing] = useState(false);
@@ -93,6 +95,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       setValidStart('');
       setValidEnd('');
       setStatisticalConfig(undefined);
+      setGPConfig(undefined);
       setPreview(null);
       setPendingConfig(null);
       setPreviewError('');
@@ -143,7 +146,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   }, [isAuthenticated, isAuthenticating, sessionEpoch]);
 
   const invalidDateWindow = (
-    (algorithm === 'statistical' && (!miningStart || !miningEnd))
+    (algorithm !== 'rdagent' && (!miningStart || !miningEnd))
     || Boolean(miningStart) !== Boolean(miningEnd)
     || (Boolean(miningStart && miningEnd) && miningStart > miningEnd)
     || Boolean(validStart) !== Boolean(validEnd)
@@ -154,7 +157,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
   const statisticalDefaults = algorithms.find((item) => item.key === 'statistical')?.statistical_defaults;
   const effectiveStatisticalConfig = effectiveStatisticalOptions(statisticalDefaults, statisticalConfig);
-  const invalidStatisticalOptions = algorithm === 'statistical' && effectiveStatisticalConfig
+  const effectiveGPConfig = gpConfig ?? algorithms.find((item) => item.key === 'gp')?.gp_defaults;
+  const invalidStatisticalOptions = algorithm === 'gp' && effectiveGPConfig && (effectiveGPConfig.population_size * effectiveGPConfig.generations > 2048 || effectiveGPConfig.top_k > effectiveGPConfig.population_size)
+    ? 'GP 搜索规模或保留因子数超过限制' : algorithm === 'statistical' && effectiveStatisticalConfig
     ? statisticalOptionsError(effectiveStatisticalConfig)
     : null;
 
@@ -162,6 +167,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     userInput: input.trim(),
     algorithm,
     statisticalConfig: algorithm === 'statistical' ? effectiveStatisticalConfig : undefined,
+    gpConfig: algorithm === 'gp' ? effectiveGPConfig : undefined,
     autoMaterialize: false,
     miningStart: miningStart || undefined,
     miningEnd: miningEnd || undefined,
@@ -185,7 +191,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     try {
       const result = await onPreview(taskConfig);
       if (generation !== getSessionGeneration()) return;
-      setPendingConfig(taskConfig.algorithm === 'statistical' && result.statistical_config
+      setPendingConfig(taskConfig.algorithm === 'gp' && result.gp_config
+        ? { ...taskConfig, gpConfig: result.gp_config } : taskConfig.algorithm === 'statistical' && result.statistical_config
         ? { ...taskConfig, statisticalConfig: result.statistical_config }
         : taskConfig);
       setPreview(result);
@@ -269,11 +276,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         </div>
 
         <div className="px-5 pt-5 sm:px-6">
-          {algorithm === 'statistical'
-            ? <p className="text-xs font-semibold text-slate-800">统计因子搜索</p>
+          {algorithm !== 'rdagent'
+            ? <p className="text-xs font-semibold text-slate-800">{algorithm === 'gp' ? 'GP 遗传编程搜索' : '统计因子搜索'}</p>
             : <label htmlFor="mining-research-prompt" className="text-xs font-semibold text-slate-800">研究假设</label>}
           <p className="mt-1 text-xs leading-5 text-slate-400">
-            {algorithm === 'statistical' ? '选择日期窗口后，按固定候选空间搜索日频量价因子。' : '描述你想验证的市场规律、信号或因子组合。'}
+            {algorithm === 'gp' ? '通过种群选择、交叉和变异搜索日频量价公式，无需大模型。' : algorithm === 'statistical' ? '选择日期窗口后，按固定候选空间搜索日频量价因子。' : '描述你想验证的市场规律、信号或因子组合。'}
           </p>
           {algorithm === 'rdagent' && (
             <textarea
@@ -356,7 +363,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             className="flex w-full items-center gap-2 py-3 text-left text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-300"
           >
             <CalendarDays className="h-4 w-4 shrink-0 text-slate-400" />
-            <span className="shrink-0 font-medium text-slate-600">{algorithm === 'statistical' ? '统计窗口' : '实验窗口'}</span>
+            <span className="shrink-0 font-medium text-slate-600">{algorithm === 'gp' ? 'GP 搜索窗口' : algorithm === 'statistical' ? '统计窗口' : '实验窗口'}</span>
             <span className={`min-w-0 flex-1 truncate ${invalidDateWindow ? 'text-amber-700' : 'text-slate-400'}`}>
               {invalidDateWindow ? '请完善日期区间' : miningStart ? `${miningStart} 至 ${miningEnd}${validStart ? ` · OOS ${validStart} 至 ${validEnd}` : ''}` : '使用系统默认窗口 · 可选'}
             </span>
@@ -365,28 +372,29 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           <div id="mining-date-window" hidden={!windowExpanded} className="pb-4">
             <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,20rem),1fr))] gap-4">
               <fieldset className="min-w-0">
-                <legend className="mb-2 text-xs font-medium text-slate-600">挖掘区间{algorithm === 'statistical' ? '（必填）' : '（可选）'}</legend>
+                <legend className="mb-2 text-xs font-medium text-slate-600">挖掘区间{algorithm !== 'rdagent' ? '（必填）' : '（可选）'}</legend>
                 <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 text-xs text-slate-400">
-                  <input aria-label={`${algorithm === 'statistical' ? '统计' : 'RD-Agent'}挖掘开始日期`} type="date" value={miningStart} onChange={(event) => setMiningStart(event.target.value)} disabled={isRunning} className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-100 disabled:opacity-50" />
+                  <input aria-label={`${algorithm === 'gp' ? 'GP' : algorithm === 'statistical' ? '统计' : 'RD-Agent'}挖掘开始日期`} type="date" value={miningStart} onChange={(event) => setMiningStart(event.target.value)} disabled={isRunning} className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-100 disabled:opacity-50" />
                   <span>至</span>
-                  <input aria-label={`${algorithm === 'statistical' ? '统计' : 'RD-Agent'}挖掘结束日期`} type="date" value={miningEnd} onChange={(event) => setMiningEnd(event.target.value)} disabled={isRunning} className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-100 disabled:opacity-50" />
+                  <input aria-label={`${algorithm === 'gp' ? 'GP' : algorithm === 'statistical' ? '统计' : 'RD-Agent'}挖掘结束日期`} type="date" value={miningEnd} onChange={(event) => setMiningEnd(event.target.value)} disabled={isRunning} className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-100 disabled:opacity-50" />
                 </div>
               </fieldset>
               <fieldset className="min-w-0">
                 <legend className="mb-2 text-xs font-medium text-slate-600">样本外检验 OOS（可选）</legend>
                 <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 text-xs text-slate-400">
-                  <input aria-label={`${algorithm === 'statistical' ? '统计' : 'RD-Agent'}验证开始日期`} type="date" value={validStart} onChange={(event) => setValidStart(event.target.value)} disabled={isRunning} className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-100 disabled:opacity-50" />
+                  <input aria-label={`${algorithm === 'gp' ? 'GP' : algorithm === 'statistical' ? '统计' : 'RD-Agent'}验证开始日期`} type="date" value={validStart} onChange={(event) => setValidStart(event.target.value)} disabled={isRunning} className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-100 disabled:opacity-50" />
                   <span>至</span>
-                  <input aria-label={`${algorithm === 'statistical' ? '统计' : 'RD-Agent'}验证结束日期`} type="date" value={validEnd} onChange={(event) => setValidEnd(event.target.value)} disabled={isRunning} className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-100 disabled:opacity-50" />
+                  <input aria-label={`${algorithm === 'gp' ? 'GP' : algorithm === 'statistical' ? '统计' : 'RD-Agent'}验证结束日期`} type="date" value={validEnd} onChange={(event) => setValidEnd(event.target.value)} disabled={isRunning} className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-100 disabled:opacity-50" />
                 </div>
               </fieldset>
             </div>
             <p className={`mt-3 text-xs leading-5 ${invalidDateWindow ? 'text-amber-700' : 'text-slate-400'}`}>
-              {algorithm === 'statistical' ? '请填写完整挖掘区间。' : '留空使用服务器默认训练窗口。'}日期须从早到晚，OOS 必须位于挖掘区间之后。
+              {algorithm !== 'rdagent' ? '请填写完整挖掘区间。' : '留空使用服务器默认训练窗口。'}日期须从早到晚，OOS 必须位于挖掘区间之后。
             </p>
           </div>
         </div>
 
+        {algorithm === 'gp' && effectiveGPConfig && <GPOptionsPanel value={effectiveGPConfig} onChange={setGPConfig} disabled={isRunning || previewing} />}
         {algorithm === 'statistical' && effectiveStatisticalConfig && (
           <>
             <StatisticalOptionsPanel key={sessionEpoch} value={effectiveStatisticalConfig} disabled={isRunning || previewing} onChange={setStatisticalConfig} />
@@ -394,7 +402,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         )}
 
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 bg-slate-50/60 px-5 py-4 sm:px-6">
-          <span className="text-xs text-slate-400">{algorithm === 'statistical' ? '确认参数后开始搜索' : 'Enter 预览 · Shift + Enter 换行'}</span>
+          <span className="text-xs text-slate-400">{algorithm !== 'rdagent' ? '确认参数后开始搜索' : 'Enter 预览 · Shift + Enter 换行'}</span>
           {isRunning && onStop ? (
             <button
               type="button"
@@ -468,13 +476,14 @@ const PreviewDialog: React.FC<{
         {preview.algorithm.key === 'rdagent' && <><dt className="text-slate-500">挖掘方向</dt><dd className="whitespace-pre-wrap break-words">{preview.direction || '未填写'}{preview.directions.length > 0 ? `；类别：${preview.directions.join('、')}（${preview.direction_mode === 'random' ? '随机选择' : preview.direction_mode === 'quota' ? '配额加权选择' : '按首项选择'}）` : ''}</dd></>}
         {preview.direction_weighting === 'blankness' && <><dt className="text-slate-500">随机口径</dt><dd>按本人在该股票池的历史提交次数使用 1/(1+n) 加权，提交时抽取；历史不可用时明确记录均匀兜底。种子及候选权重保存在任务详情。</dd></>}
         {preview.direction_quota && <><dt className="text-slate-500">配额预演</dt><dd>{preview.direction_quota.available ? `三档名额 ${preview.direction_quota.slots.explore}/${preview.direction_quota.slots.exploit}/${preview.direction_quota.slots.mutate}（探索/优选/变异），已打分 ${preview.direction_quota.directions.length} 条候选` : `暂不可用：${preview.direction_quota.error ?? '方向史或饱和数据读取出错'}，提交时将退回历史空白度加权`}</dd></>}
-        <dt className="text-slate-500">日期窗口</dt><dd>{preview.window.mode === 'custom' ? preview.algorithm.key === 'statistical'
+        <dt className="text-slate-500">日期窗口</dt><dd>{preview.window.mode === 'custom' ? preview.algorithm.key !== 'rdagent'
           ? `${preview.window.mining?.join(' 至 ')}${preview.window.oos ? `；OOS ${preview.window.oos.join(' 至 ')}` : '；未设置 OOS'}`
           : `${preview.window.mining?.join(' 至 ')}；训练 ${preview.window.train?.join(' 至 ')}；验证 ${preview.window.valid?.join(' 至 ')}；测试 ${preview.window.test?.join(' 至 ')}${preview.window.oos ? `；OOS ${preview.window.oos.join(' 至 ')}` : ''}` : '使用服务器默认窗口'}</dd>
         {preview.algorithm.key === 'rdagent' && <><dt className="text-slate-500">演化轮数</dt><dd>{preview.loop_n}</dd></>}
         <dt className="text-slate-500">LLM</dt><dd>{preview.requires_llm ? '需要' : '不需要'}</dd>
       </dl>
       {preview.algorithm.key === 'statistical' && preview.statistical_config && <StatisticalOptionsSummary value={preview.statistical_config} />}
+      {preview.algorithm.key === 'gp' && preview.gp_config && <p className="mt-3 text-xs text-slate-600">种群 {preview.gp_config.population_size} · 代数 {preview.gp_config.generations} · Top-{preview.gp_config.top_k} · 随机种子 {preview.gp_config.seed} · 复杂度惩罚 {preview.gp_config.complexity_penalty}</p>}
       <div className="mt-5 flex justify-end gap-2">
         <button type="button" onClick={onCancel} className="rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-600">返回修改</button>
         <button type="button" onClick={onConfirm} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white">确认并开始</button>

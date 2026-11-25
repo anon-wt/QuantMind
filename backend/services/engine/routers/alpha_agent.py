@@ -11,7 +11,10 @@ import sys
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 import httpx
 from fastapi import APIRouter, Body, HTTPException, Query, Request
@@ -21,6 +24,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from backend.services.engine.alpha_agent.hw_lock import HardwareLockError
 from backend.services.engine.alpha_agent.launcher import get_launcher
 from backend.services.engine.alpha_agent.api_models import MiningSubmitRequest
+from backend.services.engine.alpha_agent.gp.configuration import GPConfig
 from backend.services.engine.auth_context import (
     assert_identity_not_spoofed,
     get_authenticated_identity,
@@ -220,7 +224,7 @@ async def _require_owned_task(task_id: str, request: Request) -> dict:
     auth_user_id, auth_tenant_id = get_authenticated_identity(request)
     launcher = get_launcher()
     status = await launcher.get_task_status(task_id)
-    if not status or status.get("algorithm") == "statistical":
+    if not status or status.get("algorithm") in {"statistical", "gp"}:
         from backend.services.engine.alpha_agent.statistical_runtime import (
             owned_statistical_task,
         )
@@ -289,11 +293,11 @@ async def start_evolution(
     )
 
     # JSON is the current UI contract; retain query-only requests for old clients.
-    values = dict(
-        algorithm="rdagent", market=market, universe=universe, loop_n=loop_n,
-        direction=direction, directions=directions, direction_mode=direction_mode,
-        data_source=data_source,
-    )
+    values = {
+        "algorithm": "rdagent", "market": market, "universe": universe, "loop_n": loop_n,
+        "direction": direction, "directions": directions, "direction_mode": direction_mode,
+        "data_source": data_source,
+    }
     if isinstance(payload, MiningSubmitRequest):
         values.update(payload.model_dump(exclude_none=True))
     from backend.services.engine.alpha_agent.algorithm_registry import (
@@ -306,7 +310,7 @@ async def start_evolution(
         )
     except AlgorithmError as exc:
         raise HTTPException(400, str(exc)) from exc
-    if algorithm.key == "statistical":
+    if algorithm.key in {"statistical", "gp"}:
         from backend.services.engine.alpha_agent.statistical_runtime import (
             submit_statistical,
         )
@@ -460,7 +464,7 @@ async def get_task_status(task_id: str, request: Request):
 async def cancel_task(task_id: str, request: Request):
     """取消演化任务"""
     status = await _require_owned_task(task_id, request)
-    if status.get("algorithm") == "statistical":
+    if status.get("algorithm") in {"statistical", "gp"}:
         from backend.services.engine.alpha_agent.statistical_runtime import _task_store
 
         state = await _task_store().request_cancel(
@@ -1056,9 +1060,10 @@ async def list_mining_algorithms():
                     "supports_direction_batches": item.get("key") == "rdagent",
                     "supports_sampled_direction_batches": item.get("key") == "rdagent",
                     "supports_direction_quota": item.get("key") == "rdagent",
-                    "supports_experience_memory": True,
+                    "supports_experience_memory": item.get("key") in {"rdagent", "statistical"},
                     "supports_variant_ledger": item.get("key") == "statistical",
                     **statistical_options,
+                    **({"gp_defaults": GPConfig().model_dump()} if item.get("key") == "gp" else {}),
                 }
             )
         else:
@@ -1154,7 +1159,7 @@ async def preview_mining(request: Request, payload: dict):
         if market == "a_share" and not _universe_is_valid(universe):
             raise ValueError("所选股票池不可用或不属于当前用户")
         statistical_config = None
-        if algorithm.key == "statistical":
+        if algorithm.key in {"statistical", "gp"}:
             from backend.services.engine.alpha_agent.statistical.configuration import (
                 STATISTICAL_PARAMETER_KEYS,
                 statistical_config_payload,
@@ -1180,7 +1185,7 @@ async def preview_mining(request: Request, payload: dict):
     except (AlgorithmError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    if algorithm.key == "statistical" and not values.get("mining_start"):
+    if algorithm.key in {"statistical", "gp"} and not values.get("mining_start"):
         raise HTTPException(status_code=422, detail="统计挖掘必须提供挖掘日期范围")
 
     datasets_by_key = {}
@@ -1273,6 +1278,7 @@ async def preview_mining(request: Request, payload: dict):
             "window": window_preview,
             "requires_llm": algorithm.uses_llm,
             "statistical_config": statistical_config,
+            "gp_config": GPConfig.model_validate(values.get("gp_config") or {}).model_dump() if algorithm.key == "gp" else None,
         },
     }
 

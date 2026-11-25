@@ -88,6 +88,42 @@ def test_statistical_json_dispatch_does_not_request_llm(endpoint):
     llm.assert_not_called()
 
 
+def test_gp_dispatch_preserves_seed_and_does_not_request_llm(endpoint):
+    client, submitted, llm = endpoint
+    response = client.post(
+        "/evolve",
+        json={
+            **request_body(),
+            "algorithm": "gp",
+            "gp_config": {"seed": 17, "population_size": 8, "generations": 2},
+        },
+    )
+    assert response.status_code == 200
+    values = submitted.call_args.args[1]
+    assert values["gp_config"]["seed"] == 17
+    assert values["algorithm"] == "gp"
+    assert submitted.call_args.args[2].key == "gp"
+    llm.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"gp_config": {"population_size": 1000}},
+        {"gp_config": {"seed": -1}},
+        {"valid_start": "2021-01-01", "valid_end": "2023-01-01"},
+    ],
+)
+def test_invalid_gp_is_rejected_before_dispatch(endpoint, change):
+    client, submitted, llm = endpoint
+    response = client.post(
+        "/evolve", json={**request_body(), "algorithm": "gp", **change}
+    )
+    assert response.status_code == 422
+    submitted.assert_not_called()
+    llm.assert_not_called()
+
+
 @pytest.mark.parametrize(
     "change",
     [
@@ -141,7 +177,8 @@ def test_factor_results_keep_owner_task_evidence_and_fixed_expression():
         )
 
 
-def test_launcher_dispatches_statistical_before_rd_agent(monkeypatch):
+@pytest.mark.parametrize("algorithm", ["statistical", "gp"])
+def test_launcher_dispatches_statistical_before_rd_agent(monkeypatch, algorithm):
     import asyncio
     from backend.services.engine.alpha_agent.launcher import AlphaAgentLauncher
 
@@ -149,7 +186,7 @@ def test_launcher_dispatches_statistical_before_rd_agent(monkeypatch):
     monkeypatch.setattr(runtime, "run_statistical", run)
     launcher = AlphaAgentLauncher.__new__(AlphaAgentLauncher)
     row = {
-        "algorithm": "statistical",
+        "algorithm": algorithm,
         "market": "a_share",
         "tenant_id": "tenant",
         "user_id": "owner",

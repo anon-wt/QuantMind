@@ -96,11 +96,19 @@ export interface StatisticalMiningOptions {
 }
 
 // Task configuration
+export interface GPMiningOptions {
+  population_size: number; generations: number; top_k: number; tournament_size: number;
+  elite_size: number; max_depth: number; max_nodes: number; windows: number[];
+  crossover_rate: number; mutation_rate: number; complexity_penalty: number; seed: number;
+  horizon: number; min_names: number; min_days: number; dedup_corr: number;
+}
+
 export interface TaskConfig {
   // Basic configuration
   userInput: string;
-  algorithm?: 'rdagent' | 'statistical';
+  algorithm?: 'rdagent' | 'statistical' | 'gp';
   statisticalConfig?: StatisticalMiningOptions;
+  gpConfig?: GPMiningOptions;
   autoMaterialize?: boolean;
   miningStart?: string;
   miningEnd?: string;

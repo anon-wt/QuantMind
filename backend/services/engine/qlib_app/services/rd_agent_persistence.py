@@ -1115,8 +1115,8 @@ class AlphaMiningTaskPersistence:
             )
             if row is None:
                 raise LookupError("Statistical task owner scope no longer matches")
-            if row["algorithm"] != "statistical":
-                raise ValueError("Only statistical task data can be sealed")
+            if row["algorithm"] not in {"statistical", "gp"}:
+                raise ValueError("Only numerical mining task data can be sealed")
             if row["status"] != "running":
                 raise ValueError("Statistical task must be running to seal its data")
             current_snapshot = row["data_snapshot"]
@@ -1149,16 +1149,14 @@ class AlphaMiningTaskPersistence:
                 freeze_memory,
             )
 
-            data_snapshot = {
-                **data_snapshot,
-                "variant_memory": await freeze_memory(
+            if row["algorithm"] == "statistical":
+                data_snapshot = {**data_snapshot, "variant_memory": await freeze_memory(
                     session,
                     owner=owner,
                     algorithm_version=row["algorithm_version"],
                     params=params,
                     snapshot=data_snapshot,
-                ),
-            }
+                )}
             encoded_snapshot = json.dumps(
                 data_snapshot,
                 ensure_ascii=False,
@@ -1169,7 +1167,7 @@ class AlphaMiningTaskPersistence:
             if len(encoded_snapshot.encode("utf-8")) > 256 * 1024:
                 raise ValueError("Frozen statistical memory snapshot exceeds 256 KiB")
             spec = MiningTaskSpec.build(
-                algorithm="statistical",
+                algorithm=row["algorithm"],
                 algorithm_version=row["algorithm_version"],
                 request=request,
                 params=params,
@@ -1179,7 +1177,7 @@ class AlphaMiningTaskPersistence:
                 text(
                     "UPDATE alpha_mining_task_specs SET data_snapshot=CAST(:snapshot AS jsonb) "
                     "WHERE task_id=:task AND tenant_id=:tenant_id AND user_id=:user_id "
-                    "AND algorithm='statistical'"
+                    "AND algorithm IN ('statistical','gp')"
                 ),
                 {"snapshot": encoded_snapshot, "task": task_id, **owner.sql_params()},
             )
@@ -1367,7 +1365,9 @@ class AlphaMiningTaskPersistence:
                 or not isinstance(factor["data_source"], str)
                 or not isinstance(factor["metadata"], dict)
                 or factor["metadata"].get("task_id") != task_id
-                or factor["metadata"].get("algorithm") != "statistical"
+                or factor["metadata"].get("algorithm") not in {"statistical", "gp"}
+                or factor["metadata"].get("algorithm")
+                != result.get("algorithm", "statistical")
                 or factor["metadata"].get("execution_fingerprint")
                 != execution_fingerprint
                 or (
@@ -1507,9 +1507,10 @@ class AlphaMiningTaskPersistence:
                 record_result as record_variant_result,
             )
 
-            await record_variant_result(
-                session, owner=owner, task_id=task_id, result=result
-            )
+            if result.get("algorithm", "statistical") == "statistical":
+                await record_variant_result(
+                    session, owner=owner, task_id=task_id, result=result
+                )
             updated = await session.execute(
                 text(
                     "UPDATE alpha_mining_tasks SET status='completed', "

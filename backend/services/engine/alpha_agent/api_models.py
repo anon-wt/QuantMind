@@ -6,6 +6,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .statistical.configuration import StatisticalOverrides
+from .gp.configuration import GPConfig
 
 
 class MiningSubmitRequest(StatisticalOverrides):
@@ -16,7 +17,8 @@ class MiningSubmitRequest(StatisticalOverrides):
     """
 
     model_config = ConfigDict(extra="forbid")
-    algorithm: Literal["rdagent", "statistical"] | None = None
+    algorithm: Literal["rdagent", "statistical", "gp"] | None = None
+    gp_config: GPConfig | None = None
     market: Literal["a_share"] | None = None
     universe: str | None = Field(None, min_length=1, max_length=64)
     loop_n: int | None = Field(None, ge=1, le=20, strict=True)
@@ -48,10 +50,12 @@ class MiningSubmitRequest(StatisticalOverrides):
                 self.valid_start,
                 self.valid_end,
             )
-        if self.algorithm != "statistical":
+        if self.gp_config is not None and self.algorithm != "gp":
+            raise ValueError("GP 参数仅适用于 GP 遗传编程模式")
+        if self.algorithm not in {"statistical", "gp"}:
             return self
         if not self.mining_start or not self.mining_end:
-            raise ValueError("统计派必须提供 mining_start 和 mining_end")
+            raise ValueError("统计/GP 挖掘必须提供 mining_start 和 mining_end")
         start, end = (
             date.fromisoformat(self.mining_start),
             date.fromisoformat(self.mining_end),

@@ -148,6 +148,10 @@ def _prepare_snapshot(
     warmup = candidates.MAX_MIN_HISTORY + (
         config.composite_z_window if config.composite_enabled else 0
     )
+    if request.get("algorithm") == "gp":
+        from ..gp.formula import MAX_HISTORY
+
+        warmup = max(warmup, MAX_HISTORY)
     _atomic_json(
         progress_path,
         {"stage": "snapshot", "detail": "冻结行情与元数据输入", "progress_pct": 5},
@@ -241,6 +245,7 @@ _TASK_ENVELOPE_PARAMS = frozenset(
         "loop_n",
         "direction",
         "auto_materialize",
+        "gp_config",
     }
 )
 
@@ -256,6 +261,12 @@ def validate_task_params(params: dict[str, Any]) -> None:
 
     if params.keys() - STATISTICAL_PARAMETER_KEYS - _TASK_ENVELOPE_PARAMS:
         raise ValueError("Unsupported statistical task parameters")
+    if params.get("algorithm") == "gp":
+        from ..gp.configuration import GPConfig
+
+        GPConfig.model_validate(params.get("gp_config") or {})
+    elif params.get("gp_config") is not None:
+        raise ValueError("GP 参数不能用于统计挖掘")
 
 
 def _statistical_config(params: dict[str, Any]):
@@ -283,7 +294,7 @@ def digest_file(path: Path, max_bytes: int) -> str:
 def run(request_path: Path, result_path: Path, progress_path: Path) -> None:
     _apply_resource_limits()
     request = json.loads(request_path.read_text(encoding="utf-8"))
-    if not isinstance(request, dict) or request.get("algorithm") != "statistical":
+    if not isinstance(request, dict) or request.get("algorithm") not in {"statistical", "gp"}:
         raise ValueError("Invalid statistical worker request")
     params = request.get("params")
     snapshot = request.get("data_snapshot")
@@ -365,19 +376,31 @@ def run(request_path: Path, result_path: Path, progress_path: Path) -> None:
     ):
         raise ValueError("Frozen instrument list is invalid")
 
-    def report(stage: str, detail: str) -> None:
+    def report(stage: str, detail: str, **extra) -> None:
         _atomic_json(
             progress_path,
             {
                 "stage": str(stage)[:64],
                 "detail": str(detail)[:1000],
-                "progress_pct": _STAGE_PROGRESS.get(str(stage), 5),
+                "progress_pct": extra.get("progress_pct", _STAGE_PROGRESS.get(str(stage), 5)),
             },
         )
 
     from .variant_ledger import frozen_cooled_keys
 
     cooled_keys = frozen_cooled_keys(snapshot)
+    if request["algorithm"] == "gp":
+        from ..gp.engine import run_gp_mining
+
+        result = run_gp_mining(
+            params["mining_start"], params["mining_end"],
+            price_panel=pd.read_parquet(panel_file), metadata=pd.read_parquet(metadata_file),
+            config=params.get("gp_config"), statistical_config=config,
+            valid_start=params.get("valid_start"), valid_end=params.get("valid_end"),
+            progress=report,
+        )
+        _atomic_json(result_path, _sanitize(result))
+        return
     result = run_statistical_mining(
         params["mining_start"],
         params["mining_end"],

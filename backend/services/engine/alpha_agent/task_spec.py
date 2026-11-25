@@ -54,6 +54,7 @@ PARAMETER_KEYS = frozenset(
         "composite_z_window",
         "net_ic_cost_rate",
         "auto_materialize",
+        "gp_config",
     }
 )
 
@@ -101,7 +102,7 @@ class MiningTaskSpec:
     schema_version: int = 1
 
     def __post_init__(self) -> None:
-        if self.algorithm not in {"rdagent", "statistical"}:
+        if self.algorithm not in {"rdagent", "statistical", "gp"}:
             raise ValueError("Unknown mining algorithm")
         if (
             not isinstance(self.algorithm_version, str)

@@ -49,10 +49,11 @@ async def submit_statistical(request: Request, values: dict, algorithm, owner: d
     from backend.shared.stock_utils import StockCodeUtil
     from backend.shared.storage_quota import StorageQuotaExceeded, check_user_quota
 
+    label = "GP 遗传编程" if algorithm.key == "gp" else "统计挖掘"
     if values.get("data_source") not in (None, "", "qlib_bin"):
-        raise HTTPException(400, "统计挖掘仅支持公共 Qlib 日线数据")
+        raise HTTPException(400, f"{label}仅支持公共 Qlib 日线数据")
     if values.get("auto_materialize"):
-        raise HTTPException(400, "统计挖掘完成后请显式提交因子数据生成任务")
+        raise HTTPException(400, f"{label}完成后请显式提交因子数据生成任务")
     key = request.headers.get("Idempotency-Key", "").strip() or None
     if key is not None and (len(key) > 128 or not key.isascii()):
         raise HTTPException(400, "Idempotency-Key 不合法")
@@ -68,8 +69,11 @@ async def submit_statistical(request: Request, values: dict, algorithm, owner: d
         raise HTTPException(507, str(exc)) from exc
     except Exception as exc:
         raise HTTPException(503, "暂时无法核验存储配额，请稍后重试") from exc
+    algorithm_key = algorithm.key
+    if algorithm_key not in {"statistical", "gp"}:
+        raise HTTPException(400, "不支持的数值挖掘算法")
     params = {
-        "algorithm": "statistical",
+        "algorithm": algorithm_key,
         "market": "a_share",
         "universe": values.get("universe", "all_a"),
         "data_source": "qlib_bin",
@@ -87,6 +91,12 @@ async def submit_statistical(request: Request, values: dict, algorithm, owner: d
             statistical_config_payload,
             {k: values[k] for k in STATISTICAL_PARAMETER_KEYS if k in values},
         )
+        if algorithm_key == "gp":
+            from .gp.configuration import GPConfig
+
+            params["gp_config"] = GPConfig.model_validate(
+                values.get("gp_config") or {}
+            ).model_dump()
         pool_ref = params["universe"]
         if not pool_ref.startswith(("pool:", "pool_id:", "list:", "file:")):
             pool_ref = f"pool:{pool_ref}"
@@ -110,9 +120,9 @@ async def submit_statistical(request: Request, values: dict, algorithm, owner: d
                 qlib_instruments, "all", qlib_dir=provider
             )
         if not symbols or len(symbols) > 20000:
-            raise ValueError("所选股票池为空或超过统计挖掘容量")
+            raise ValueError(f"所选股票池为空或超过{label}容量")
         spec = MiningTaskSpec.build(
-            algorithm="statistical",
+            algorithm=algorithm_key,
             algorithm_version=algorithm.version,
             request=values,
             params={**params, **options},
@@ -138,7 +148,7 @@ async def submit_statistical(request: Request, values: dict, algorithm, owner: d
             data_source="qlib_bin",
             status="queued",
             phase="queued",
-            progress="等待统计挖掘执行",
+            progress=f"等待{label}执行",
             executor_json="{}",
         )
         row = await store.get(task_id, **owner, consistent=True)
@@ -147,10 +157,10 @@ async def submit_statistical(request: Request, values: dict, algorithm, owner: d
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     except LeaseUnavailable as exc:
-        raise HTTPException(503, "统计挖掘队列暂不可用，请稍后确认原提交") from exc
+        raise HTTPException(503, f"{label}队列暂不可用，请稍后确认原提交") from exc
     if row is None:
         raise HTTPException(503, "任务已提交，状态暂无法核验，请确认原提交")
-    return {"code": 200, "data": {**public_task(row), "algorithm": "statistical"}}
+    return {"code": 200, "data": {**public_task(row), "algorithm": algorithm_key}}
 
 
 def _read_json(path: Path, limit=4 * 1024 * 1024) -> dict:
@@ -169,14 +179,14 @@ async def owned_statistical_task(task_id: str, *, tenant_id: str, user_id: str):
     store = _task_store()
     owner = {"tenant_id": tenant_id, "user_id": user_id}
     row = await store.get_for_owner_with_spec(task_id, **owner, consistent=True)
-    if not row or row.get("algorithm") != "statistical":
+    if not row or row.get("algorithm") not in {"statistical", "gp"}:
         return None
     if row["status"] == "completed":
         row["result"] = await store.get_result(task_id, **owner)
     params = row["params_snapshot"]
     return {
         **public_task(row),
-        "algorithm": "statistical",
+        "algorithm": row["algorithm"],
         **{
             k: params.get(k)
             for k in ("mining_start", "mining_end", "valid_start", "valid_end")
@@ -197,19 +207,23 @@ def result_factors(task_id: str, fingerprint: str, params: dict, result: dict):
     for report in reports:
         key = report["key"]
         expression = report["expression"]
+        algorithm_key = params.get("algorithm", "statistical")
         metadata = {
-            "algorithm": "statistical",
+            "algorithm": algorithm_key,
             "task_id": task_id,
             "execution_fingerprint": fingerprint,
             "candidate_key": key,
             "evidence": report,
             "rank_icir": report.get("icir"),
         }
+        if algorithm_key == "gp":
+            metadata["gp_expression"] = report["gp_expression"]
+            metadata["gp_config"] = params["gp_config"]
         trusted_statistical_candidate(metadata, expression)
         identity = hashlib.sha256(f"{task_id}:{key}".encode()).hexdigest()[:32]
         rows.append(
             {
-                "factor_id": f"stat_{identity}",
+                "factor_id": f"{'gp' if algorithm_key == 'gp' else 'stat'}_{identity}",
                 "factor_name": report["name"],
                 "factor_code": expression,
                 "factor_formulation": expression,
@@ -217,7 +231,7 @@ def result_factors(task_id: str, fingerprint: str, params: dict, result: dict):
                 "market": "a_share",
                 "universe": params["universe"],
                 "data_source": "qlib_bin",
-                "date_range": f"{params['mining_start']}~{params['mining_end']}",
+                "date_range": f"{params['mining_start']}/{params['mining_end']}",
                 "metadata": metadata,
             }
         )
@@ -237,11 +251,12 @@ async def run_statistical(launcher, record: dict):
     owner = {k: record[k] for k in ("tenant_id", "user_id")}
     task_id = record["task_id"]
     params = record["params_snapshot"]
+    label = "GP 遗传编程" if record.get("algorithm") == "gp" else "统计挖掘"
     store = _task_store()
     task = EvolutionTask(
         task_id=task_id,
         **owner,
-        algorithm="statistical",
+        algorithm=record.get("algorithm", "statistical"),
         market="a_share",
         universe=record["universe"],
         data_source="qlib_bin",
@@ -263,7 +278,7 @@ async def run_statistical(launcher, record: dict):
                 expected_status=("pending", "queued"),
                 status="running",
                 phase="data",
-                progress="准备统计挖掘数据",
+                progress=f"准备{label}数据",
             ):
                 return
             task.status = TaskStatus.RUNNING
@@ -280,7 +295,7 @@ async def run_statistical(launcher, record: dict):
             _atomic_json(
                 request_path,
                 {
-                    "algorithm": "statistical",
+                    "algorithm": record.get("algorithm", "statistical"),
                     "params": params,
                     "data_snapshot": record["data_snapshot"],
                     "panel_path": str(work / "statistical_panel.parquet"),
@@ -339,11 +354,11 @@ async def run_statistical(launcher, record: dict):
                         pgid=process.pid,
                         leader=leader,
                     ):
-                        raise RuntimeError("统计挖掘执行占用已失效")
+                        raise RuntimeError(f"{label}执行占用已失效")
                     if not await store.set_process_group(
                         task_id, **owner, pgid=process.pid, leader=leader
                     ):
-                        raise RuntimeError("统计挖掘任务状态已变更")
+                        raise RuntimeError(f"{label}任务状态已变更")
                     deadline = time.monotonic() + 4 * 3600
                     sealed = False
                     last_progress = None
@@ -357,7 +372,7 @@ async def run_statistical(launcher, record: dict):
                             task._cancel_requested = True
                             break
                         if time.monotonic() > deadline:
-                            raise TimeoutError("统计挖掘超过 4 小时执行上限")
+                            raise TimeoutError(f"{label}超过 4 小时执行上限")
                         prepared = work / "statistical_prepared.json"
                         if not sealed and prepared.is_file():
                             snapshot = {
@@ -435,11 +450,12 @@ async def run_statistical(launcher, record: dict):
                 fingerprint = frozen["execution_fingerprint"]
                 rows = result_factors(task_id, fingerprint, params, result)
                 result.update(
+                    algorithm=record.get("algorithm", "statistical"),
                     task_id=task_id,
                     market="a_share",
                     total_factors=len(rows),
                     persisted_factors=len(rows),
-                    message=f"统计挖掘完成，入选 {len(rows)} 个因子",
+                    message=f"{label}完成，入选 {len(rows)} 个因子",
                 )
                 completed = await store.complete_with_result(
                     task_id,
@@ -452,7 +468,7 @@ async def run_statistical(launcher, record: dict):
                     task.status = TaskStatus.COMPLETED
                     task.phase = "completed"
                     task.progress_pct = 100
-                    task.progress = f"统计挖掘完成，入选 {len(rows)} 个因子"
+                    task.progress = f"{label}完成，入选 {len(rows)} 个因子"
                     task.result = {
                         "total_factors": len(rows),
                         "persisted_factors": len(rows),
@@ -464,7 +480,7 @@ async def run_statistical(launcher, record: dict):
             except Exception as exc:
                 task.status = TaskStatus.FAILED
                 task.error_message = str(exc)[:2000]
-                task.progress = f"统计挖掘失败：{task.error_message}"
+                task.progress = f"{label}失败：{task.error_message}"
                 await store.update(
                     task_id,
                     **owner,

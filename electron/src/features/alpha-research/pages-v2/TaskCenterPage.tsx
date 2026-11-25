@@ -24,6 +24,7 @@ import { VariantLedgerDialog } from '../components-v2/VariantLedgerDialog';
 import { ResearchRequestsPanel } from '../components-v2/ResearchRequestsPanel';
 import { DirectionSelectionEvidence } from '../components-v2/DirectionSelectionEvidence';
 import { MaterializationResult } from '../components-v2/MaterializationResult';
+import { GPResult } from '../components-v2/GPResult';
 import { PurgeAllDataDialog } from '../components-v2/PurgeAllDataDialog';
 
 const PAGE_SIZE = 20;
@@ -233,7 +234,7 @@ export const TaskCenterPage: React.FC = () => {
           (value) => ({ ok: true as const, value }),
           () => ({ ok: false as const }),
         ),
-      item.algorithm !== 'statistical'
+      item.algorithm === 'rdagent'
         ? getTaskTrajectory(item.task_id, controller.signal).then(
           (value) => ({ ok: true as const, value }),
           () => ({ ok: false as const }),
@@ -386,7 +387,7 @@ export const TaskCenterPage: React.FC = () => {
                     {item.source_doc_id && <div className="mt-0.5 text-[11px] text-muted-foreground" title={item.source_doc_id}>来自本人研究文档</div>}
                     {item.seed_factor_ids?.length > 0 && <div className="mt-0.5 truncate text-[11px] text-muted-foreground" title={item.seed_factor_ids.join('、')}>父本：{item.seed_factor_ids.map((id) => id.slice(0, 8)).join('、')}</div>}
                   </td>
-                  <td className="px-3 py-2 whitespace-nowrap">{item.algorithm === 'statistical' ? '统计挖掘' : 'RD-Agent'}<div className="text-[11px] text-muted-foreground">{item.algorithm_version || '版本未知'}</div></td>
+                  <td className="px-3 py-2 whitespace-nowrap">{item.algorithm === 'gp' ? 'GP 遗传编程' : item.algorithm === 'statistical' ? '统计挖掘' : 'RD-Agent'}<div className="text-[11px] text-muted-foreground">{item.algorithm_version || '版本未知'}</div></td>
                   <td className="px-3 py-2 whitespace-nowrap">{scopeLabel(item.market)}<span className="text-muted-foreground"> · {item.universe || '—'}</span></td>
                   <td className="px-2 py-2 text-center"><Badge variant={statusVariant(item.status)} className="whitespace-nowrap">{STATUS_LABELS[item.status] || item.status}</Badge></td>
                   <td className="px-3 py-2 min-w-[150px]">
@@ -539,6 +540,7 @@ export const TaskCenterPage: React.FC = () => {
           <CardContent className="space-y-4">
             <DirectionSelectionEvidence value={details.directionSelection} />
             <div className="text-xs text-muted-foreground">{details.progress || '任务状态已加载'}{details.error ? ` · ${details.error}` : ''}</div>
+            {details.algorithm === 'gp' && details.statisticalResult && <GPResult result={details.statisticalResult} />}
             {details.algorithm === 'statistical' && (
               <div>
                 <div className="text-xs font-medium mb-1.5">统计派结果</div>

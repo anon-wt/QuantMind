@@ -27,6 +27,7 @@ import type {
   UniverseInfo,
   WsMessage,
   StatisticalMiningOptions,
+  GPMiningOptions,
 } from '../types-v2';
 
 // ========================== Defaults ==========================
@@ -202,8 +203,9 @@ function normalizeAgentFactor(raw: any): Factor {
 
 export interface MiningStartParams {
   direction: string;
-  algorithm?: 'rdagent' | 'statistical';
+  algorithm?: 'rdagent' | 'statistical' | 'gp';
   statisticalConfig?: StatisticalMiningOptions;
+  gpConfig?: GPMiningOptions;
   autoMaterialize?: boolean;
   miningStart?: string;
   miningEnd?: string;
@@ -262,14 +264,16 @@ export interface MiningPreview {
   };
   requires_llm: boolean;
   statistical_config?: StatisticalMiningOptions | null;
+  gp_config?: GPMiningOptions | null;
 }
 
 function miningRequestBody(params: MiningStartParams) {
   const loopN = params.maxRounds ?? 3;
-  if (params.algorithm === 'statistical') {
+  if (params.algorithm === 'statistical' || params.algorithm === 'gp') {
     return {
       ...params.statisticalConfig,
-      algorithm: 'statistical',
+      algorithm: params.algorithm,
+      ...(params.algorithm === 'gp' ? { gp_config: params.gpConfig } : {}),
       market: 'a_share',
       universe: params.universe ?? 'all_a',
       data_source: 'qlib_bin',
@@ -278,7 +282,7 @@ function miningRequestBody(params: MiningStartParams) {
       mining_end: params.miningEnd,
       valid_start: params.validStart,
       valid_end: params.validEnd,
-      auto_materialize: params.autoMaterialize ?? true,
+      auto_materialize: params.autoMaterialize ?? false,
     };
   }
   return {
@@ -327,6 +331,7 @@ function miningSubmissionResponse(data: any, params: MiningStartParams): ApiResp
       userInput: params.direction,
       algorithm: params.algorithm ?? 'rdagent',
       statisticalConfig: params.statisticalConfig,
+      gpConfig: params.gpConfig,
       miningStart: params.miningStart,
       miningEnd: params.miningEnd,
       validStart: params.validStart,

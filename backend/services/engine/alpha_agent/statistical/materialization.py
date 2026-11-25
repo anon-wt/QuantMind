@@ -5,10 +5,12 @@ from __future__ import annotations
 from typing import Any
 
 
-def trusted_statistical_candidate(
-    metadata: Any, expression: str
-):
+def trusted_statistical_candidate(metadata: Any, expression: str):
     """Return an exact fixed-catalogue candidate, rejecting arbitrary expressions."""
+    if isinstance(metadata, dict) and metadata.get("algorithm") == "gp":
+        from ..gp.formula import trusted_candidate
+
+        return trusted_candidate(metadata, expression)
     if not isinstance(metadata, dict) or metadata.get("algorithm") != "statistical":
         return None
     candidate_key = metadata.get("candidate_key")
@@ -43,10 +45,14 @@ def trusted_statistical_candidate(
             z_window=z_window,
         )
         if plan is None or plan.expression != expression:
-            raise ValueError("Statistical composite expression differs from its evidence")
+            raise ValueError(
+                "Statistical composite expression differs from its evidence"
+            )
         return plan.candidate()
 
     candidate = CANDIDATE_BY_KEY.get(candidate_key)
     if candidate is None or candidate.expression != expression:
-        raise ValueError("Statistical factor expression differs from its fixed catalogue")
+        raise ValueError(
+            "Statistical factor expression differs from its fixed catalogue"
+        )
     return candidate

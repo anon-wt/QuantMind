@@ -37,6 +37,11 @@ export interface MiningTaskHistoryPage {
 }
 
 export interface StatisticalMiningResult {
+  gp_search?: {
+    evaluated_formulas: number;
+    warning: string;
+    history: Array<{ generation: number; evaluated: number; best_fitness: number; best_rank_ic: number | null; best_formula: string }>;
+  };
   variant_context_id?: string;
   cooled_keys?: string[];
   selected: string[];
@@ -63,6 +68,9 @@ export interface StatisticalMiningResult {
     best_horizon?: number | null;
     oos_rank_ic?: number | null;
     oos_n_days?: number;
+    fitness?: number;
+    complexity?: { op_count: number; node_count: number; depth: number };
+    oos?: { rank_ic_mean?: number; n_days?: number; reason?: string } | null;
   }>;
 }
 
@@ -77,7 +85,7 @@ export interface MiningTaskFactorResult {
 
 export interface MiningTaskResult {
   task_id: string;
-  algorithm: 'rdagent' | 'statistical';
+  algorithm: 'rdagent' | 'statistical' | 'gp';
   status: string;
   result: StatisticalMiningResult | null;
   factors: MiningTaskFactorResult[];
@@ -156,7 +164,7 @@ export async function getTaskMiningResult(
   if (
     !data
     || data.task_id !== taskId
-    || !['rdagent', 'statistical'].includes(data.algorithm)
+    || !['rdagent', 'statistical', 'gp'].includes(data.algorithm)
     || !Array.isArray(data.factors)
     || (data.result !== null && data.result !== undefined && (
       !Array.isArray(data.result.selected) || !Array.isArray(data.result.candidates)

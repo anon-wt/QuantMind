@@ -33,7 +33,7 @@ describe('factor mining API', () => {
       universe: 'csi500',
       dataSource: 'parquet',
       freq: 'day',
-    });
+    }, 'stat-request-key');
 
     expect(client.post).toHaveBeenCalledTimes(1);
     const [url, body, config] = client.post.mock.calls[0];
@@ -48,6 +48,7 @@ describe('factor mining API', () => {
       mining_end: '2022-12-31',
       valid_start: '2023-01-01',
       valid_end: '2023-12-31',
+      auto_materialize: false,
     });
     expect(config.headers['Idempotency-Key']).toEqual(expect.any(String));
     expect(config.headers['Idempotency-Key'].length).toBeGreaterThan(0);
@@ -69,7 +70,7 @@ describe('factor mining API', () => {
       miningEnd: '2022-12-31',
       validStart: '2023-01-01',
       validEnd: '2023-12-31',
-    });
+    }, 'rd-request-key');
     const [url, body, config] = client.post.mock.calls[0];
     expect(url).toBe('/alpha-agent/evolve');
     expect(body).toMatchObject({
@@ -82,6 +83,20 @@ describe('factor mining API', () => {
       valid_end: '2023-12-31',
     });
     expect(config.headers['Idempotency-Key']).toEqual(expect.any(String));
+  });
+
+  it('previews and submits the same bounded GP configuration', async () => {
+    client.post.mockResolvedValue({ data: { code: 200, data: { task_id: 'gp-1', status: 'queued' } } });
+    const params = {
+      direction: '', algorithm: 'gp' as const,
+      miningStart: '2023-01-01', miningEnd: '2023-12-31',
+      gpConfig: { population_size: 16, generations: 3, seed: 7 },
+    };
+    await previewMining(params as Parameters<typeof previewMining>[0]);
+    await startMining(params as Parameters<typeof startMining>[0], 'gp-request-key');
+    expect(client.post.mock.calls[0][1]).toEqual(client.post.mock.calls[1][1]);
+    expect(client.post.mock.calls[1][1]).toMatchObject({ algorithm: 'gp', gp_config: params.gpConfig, auto_materialize: false });
+    expect(client.post.mock.calls[1][2].headers['Idempotency-Key']).toEqual(expect.any(String));
   });
 
   it('previews the exact mining request body without an idempotency or submit side effect', async () => {
