@@ -1,6 +1,8 @@
 """Golden outcomes, sparse calendars, target provenance and non-overlap NAV."""
 
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import numpy as np
 import pandas as pd
@@ -14,6 +16,50 @@ from backend.services.engine.alpha_agent.label_contract import (
     normalize_request,
 )
 from backend.services.engine.alpha_agent.factor_job_series import build_factor_series
+from backend.services.engine.alpha_agent.factor_job_budget import (
+    record_container_intent,
+)
+
+
+def test_factor_sandbox_records_only_its_own_lease_and_pool():
+    lease = SimpleNamespace(
+        task_id="job", tenant_id="tenant", user_id="user", token="token"
+    )
+    budget = SimpleNamespace(
+        pool="alpha_factor_jobs",
+        store=SimpleNamespace(transition=MagicMock(return_value=True)),
+    )
+    labels = {
+        "quantmind.job_id": "job",
+        "quantmind.tenant_id": "tenant",
+        "quantmind.user_id": "user",
+        "quantmind.lease_token": "token",
+        "quantmind.resource_pool": "alpha_factor_jobs",
+        "quantmind.role": "sandbox",
+    }
+    keeper = {**labels, "quantmind.role": "output_keeper"}
+    arguments = {
+        "daemon_id": "daemon", "container_name": "sandbox", "labels": labels,
+        "related_containers": [{"name": "keeper", "labels": keeper}],
+        "volume_name": "volume", "volume_labels": keeper, "budget": budget,
+    }
+    assert record_container_intent(lease, **arguments)
+    assert budget.store.transition.call_args.args == (
+        "alpha_factor_jobs",
+        lease,
+        "running",
+    )
+    assert (
+        budget.store.transition.call_args.kwargs["executor"]["container_labels"]
+        == labels
+    )
+    budget.store.transition.reset_mock()
+    assert not record_container_intent(
+        lease, **{**arguments, "labels": {**labels, "quantmind.user_id": "other"}}
+    )
+    budget.store.transition.assert_not_called()
+
+
 from backend.services.engine.rd_agent.label_adapter import (
     rewrite_label_template,
     purge_segment_ends,

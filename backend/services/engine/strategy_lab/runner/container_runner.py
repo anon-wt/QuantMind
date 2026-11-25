@@ -353,9 +353,10 @@ def run_container(
         daemon_id = str(client.info().get("ID") or "") if lease is not None else ""
         related_containers = [{"name": keeper_name, "labels": keeper_labels}]
         if lease is not None:
-            from backend.services.engine.routers.ai_ide.resource_budget import (
-                record_container_intent,
-            )
+            if sandbox_mode == "factor":
+                from backend.services.engine.alpha_agent.factor_job_budget import record_container_intent
+            else:
+                from backend.services.engine.routers.ai_ide.resource_budget import record_container_intent
 
             if not daemon_id or not record_container_intent(
                 lease,

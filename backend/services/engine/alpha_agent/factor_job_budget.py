@@ -118,6 +118,64 @@ def recover_budget(*, initialize: bool = False, legacy_drained: bool = False) ->
         )
 
 
+def record_container_intent(
+    lease,
+    *,
+    daemon_id,
+    container_name,
+    labels,
+    related_containers,
+    volume_name,
+    volume_labels,
+    budget,
+    container_id=None,
+):
+    """Keep sandbox recovery witnesses in the factor lease that owns the job."""
+    if budget.pool != POOL:
+        raise ValueError("Factor container intent requires the factor job pool")
+    required = {
+        "quantmind.job_id": lease.task_id,
+        "quantmind.tenant_id": lease.tenant_id,
+        "quantmind.user_id": lease.user_id,
+        "quantmind.lease_token": lease.token,
+        "quantmind.resource_pool": POOL,
+    }
+
+    def matches(value):
+        return isinstance(value, dict) and all(
+            value.get(k) == v for k, v in required.items()
+        )
+
+    if (
+        not all((daemon_id, container_name, volume_name))
+        or not matches(labels)
+        or not matches(volume_labels)
+    ):
+        return False
+    if labels.get("quantmind.role") != "sandbox" or not isinstance(
+        related_containers, list
+    ):
+        return False
+    if any(
+        not isinstance(item, dict)
+        or not item.get("name")
+        or not matches(item.get("labels"))
+        for item in related_containers
+    ):
+        return False
+    witness = {
+        "daemon_id": daemon_id,
+        "container_name": container_name,
+        "container_labels": dict(labels),
+        "related_containers": related_containers,
+        "volume_name": volume_name,
+        "volume_labels": dict(volume_labels),
+    }
+    if container_id:
+        witness["container_id"] = container_id
+    return budget.store.transition(POOL, lease, "running", executor=witness)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Maintain factor research job leases")
     parser.add_argument("action", choices=("initialize", "recover"))
