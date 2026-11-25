@@ -192,6 +192,12 @@ def execute_factor_backtest(
     if start > end:
         raise ValueError("start_date must not be after end_date")
     cost_rate, cost_model = _cost_rate(request)
+    from .label_contract import label_spec, forward_returns as build_labels
+
+    spec = request.get("label_spec") or label_spec(1)
+    if spec != label_spec(spec.get("horizon")):
+        raise ValueError("Frozen factor label specification is invalid")
+    prediction_horizon = spec["horizon"]
 
     validation_context = request.get("validation_context")
     if validation_context is not None:
@@ -268,54 +274,12 @@ def execute_factor_backtest(
         raise ValueError(
             "Factor code must define a Factor class or calculate_* function"
         )
+    functional_output = None
     if kind == "functional":
-        data_source = "panel"
-        data_path = alpha_router._resolve_factor_panel_path_for_market(
-            "a_share", factor_code=factor_code, datasets=request.get("datasets")
-        )
-        if not data_path:
-            raise RuntimeError("A-share functional factor panel data is unavailable")
-        progress({"stage": "factor_eval", "progress_pct": 45})
-        from backend.services.engine.strategy_lab.runner.container_runner import (
-            run_functional_factor_metrics,
-        )
-
-        execution = run_functional_factor_metrics(
-            factor_code,
-            data_path,
-            tenant_id=tenant_id,
-            user_id=user_id,
-            datasets=request.get("datasets"),
-            start_date=start,
-            end_date=end,
-            universe_symbols=request.get("universe_symbols"),
-            lease=lease,
-            budget=budget,
-            lifecycle=lifecycle,
-            include_series=True,
-            cost_rate=cost_rate,
-            series_max_points=request.get("_series_max_points", 750),
-        )
-        if isinstance(execution, dict) and isinstance(execution.get("metrics"), dict):
-            metrics = execution["metrics"]
-            series_snapshot = execution.get("series")
-        else:
-            metrics = execution
-            series_snapshot = None
-        result = {
-            "factor_id": factor_id,
-            "universe": universe,
-            "data_source": data_source,
-            "start_date": start,
-            "end_date": end,
-            "metrics": metrics,
-            "cost_model": cost_model,
-        }
-        if isinstance(series_snapshot, dict):
-            result["series"] = series_snapshot
-        if validation_context is not None:
-            result["validation"] = validation_context
-        return result
+        from .factor_codegen import feature_catalog
+        available = feature_catalog()
+        features = [name for name in alpha_router._h5_only_fields_in(factor_code) if name in available]
+        contract = {"features": features, "warmup_bars": 250}
 
     import numpy as np
     import pandas as pd
@@ -394,7 +358,32 @@ def execute_factor_backtest(
         frame = enrich_panel(frame, contract)
     evidence = input_evidence(frame, contract) if contract is not None else None
     progress({"stage": "factor_eval", "progress_pct": 45})
-    if candidate is not None:
+    if kind == "functional":
+        import uuid
+        from backend.services.engine.strategy_lab.runner.container_runner import run_functional_factor_values
+        # Use the existing public panel cache and sandbox controller. Only this
+        # bounded public input is mounted; no task credentials or owner files.
+        cache = Path("/data/mining_cache/panels")
+        cache.mkdir(parents=True, exist_ok=True)
+        data_path = cache / f"functional-{uuid.uuid4().hex}.parquet"
+        try:
+            frame.swaplevel().sort_index().to_parquet(data_path)
+            functional_output = run_functional_factor_values(
+                factor_code, str(data_path), tenant_id=tenant_id, user_id=user_id,
+                datasets=request.get("datasets"), start_date=start, end_date=end,
+                universe_symbols=list(frame.index.get_level_values(0).unique()),
+                lease=lease, budget=budget, lifecycle=lifecycle,
+            )
+        finally:
+            data_path.unlink(missing_ok=True)
+    if functional_output is not None:
+        from backend.shared.stock_utils import StockCodeUtil
+        functional_index = pd.MultiIndex.from_arrays([
+            functional_output["symbol"].map(StockCodeUtil.to_qlib),
+            pd.to_datetime(functional_output["trade_date"]),
+        ], names=frame.index.names)
+        values = pd.Series(functional_output["value"].to_numpy(), index=functional_index).reindex(frame.index).to_numpy()
+    elif candidate is not None:
         # Only the exact built-in catalogue reaches this path; user code retains
         # its Docker boundary. No expression eval or user imports occur here.
         values = np.full(len(frame), np.nan)
@@ -426,11 +415,7 @@ def execute_factor_backtest(
         frame = frame.iloc[in_window]
         values = values[in_window]
     factors = pd.Series(values, index=frame.index, name="factor")
-    forward_returns = (
-        frame["$close"]
-        .groupby(level=0)
-        .transform(lambda close: close.pct_change(fill_method=None).shift(-1))
-    )
+    forward_returns = build_labels(frame["$close"], prediction_horizon, symbol_level=0)
     common = factors.index.intersection(forward_returns.index)
     if len(common) < 100:
         raise RuntimeError(
@@ -458,15 +443,19 @@ def execute_factor_backtest(
     daily_long_gross = (
         pairs[pairs["rank"] >= 0.7].groupby("date")["return"].mean().dropna()
     )
+    # h-day forward outcomes overlap on adjacent dates: compound disjoint books.
+    daily_long_gross = daily_long_gross.iloc[::prediction_horizon]
+    portfolio_factors = pairs.loc[pairs["date"].isin(daily_long_gross.index), "factor"]
     daily_long = _net_long_returns(
-        pairs["factor"], daily_long_gross, cost_rate=cost_rate
+        portfolio_factors, daily_long_gross, cost_rate=cost_rate
     )
-    annual_return = float(daily_long.mean() * 252) if len(daily_long) else None
+    annual_scale = 252 / prediction_horizon
+    annual_return = float(daily_long.mean() * annual_scale) if len(daily_long) else None
     sharpe = None
     max_drawdown = None
     if len(daily_long) > 1:
         volatility = float(daily_long.std(ddof=1))
-        sharpe = float(daily_long.mean() / (volatility + 1e-8) * np.sqrt(252))
+        sharpe = float(daily_long.mean() / (volatility + 1e-8) * np.sqrt(annual_scale))
         equity = (1 + daily_long).cumprod()
         drawdown = (equity.cummax() - equity) / equity.cummax()
         max_drawdown = float(drawdown.max()) if len(drawdown) else None
@@ -490,6 +479,7 @@ def execute_factor_backtest(
         return_cost_series,
         cost_rate=cost_rate,
         max_points=request.get("_series_max_points", 750),
+        prediction_horizon=prediction_horizon,
     )
     if panel_callback is not None and validation_context is None:
         try:
@@ -512,6 +502,7 @@ def execute_factor_backtest(
     result = {
         "factor_id": factor_id,
         "factor_revision_no": factor_revision_no,
+        "label_spec": spec,
         "panel_input_evidence": evidence,
         "universe": universe,
         "data_source": "qlib_bin",
@@ -527,14 +518,15 @@ def execute_factor_backtest(
             "max_drawdown": max_drawdown,
             "observations": observations,
             "gross_annual_return": (
-                float(daily_long_gross.mean() * 252) if len(daily_long_gross) else None
+                float(daily_long_gross.mean() * annual_scale) if len(daily_long_gross) else None
             ),
             "net_rank_ic_mean": net_rank_ic_mean,
             "net_rank_ic_days": net_rank_ic_days,
         },
         "series": series_snapshot,
         "cost_model": cost_model,
-        "performance_basis": "equal_weight_top_30pct_net_next_day_returns",
+        "performance_basis": "equal_weight_top_30pct_net_forward_period_returns",
+        "rebalance_days": prediction_horizon,
     }
     if validation_context is not None:
         result["validation"] = validation_context

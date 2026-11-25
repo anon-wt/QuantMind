@@ -74,6 +74,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const [validEnd, setValidEnd] = useState('');
   const [statisticalConfig, setStatisticalConfig] = useState<StatisticalMiningOptions | undefined>();
   const [gpConfig, setGPConfig] = useState<GPMiningOptions | undefined>();
+  const [predictionHorizon, setPredictionHorizon] = useState(1);
   const [preview, setPreview] = useState<MiningPreview | null>(null);
   const [pendingConfig, setPendingConfig] = useState<TaskConfig | null>(null);
   const [previewing, setPreviewing] = useState(false);
@@ -96,6 +97,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       setValidEnd('');
       setStatisticalConfig(undefined);
       setGPConfig(undefined);
+      setPredictionHorizon(1);
       setPreview(null);
       setPendingConfig(null);
       setPreviewError('');
@@ -146,6 +148,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   }, [isAuthenticated, isAuthenticating, sessionEpoch]);
 
   const invalidDateWindow = (
+    !Number.isInteger(predictionHorizon) || predictionHorizon < 1 || predictionHorizon > 250 ||
     (algorithm !== 'rdagent' && (!miningStart || !miningEnd))
     || Boolean(miningStart) !== Boolean(miningEnd)
     || (Boolean(miningStart && miningEnd) && miningStart > miningEnd)
@@ -166,8 +169,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const buildTaskConfig = (): TaskConfig => ({
     userInput: input.trim(),
     algorithm,
-    statisticalConfig: algorithm === 'statistical' ? effectiveStatisticalConfig : undefined,
-    gpConfig: algorithm === 'gp' ? effectiveGPConfig : undefined,
+    predictionHorizon,
+    statisticalConfig: algorithm === 'statistical' ? { ...effectiveStatisticalConfig, horizons: [predictionHorizon] } : undefined,
+    gpConfig: algorithm === 'gp' && effectiveGPConfig ? { ...effectiveGPConfig, horizon: predictionHorizon } : undefined,
     autoMaterialize: false,
     miningStart: miningStart || undefined,
     miningEnd: miningEnd || undefined,
@@ -276,6 +280,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         </div>
 
         <div className="px-5 pt-5 sm:px-6">
+          <label className="mb-3 flex items-center gap-3 text-xs text-slate-600">预测周期（交易日）
+            <input aria-label="统一预测周期" type="number" min={1} max={250} step={1} value={predictionHorizon} disabled={isRunning || previewing}
+              onChange={(event) => setPredictionHorizon(Number(event.target.value))} className="w-20 rounded border border-slate-200 px-2 py-1" />
+          </label>
+          <p className="mb-3 text-xs text-slate-400">Y 为当日收盘至 {predictionHorizon} 个交易日后收盘的收益；后续回测与验证继承此周期。</p>
           {algorithm !== 'rdagent'
             ? <p className="text-xs font-semibold text-slate-800">{algorithm === 'gp' ? 'GP 遗传编程搜索' : '统计因子搜索'}</p>
             : <label htmlFor="mining-research-prompt" className="text-xs font-semibold text-slate-800">研究假设</label>}
@@ -473,6 +482,7 @@ const PreviewDialog: React.FC<{
         <dt className="text-slate-500">算法</dt><dd>{preview.algorithm.name}（{preview.algorithm.version}）</dd>
         <dt className="text-slate-500">市场 / 频率</dt><dd>{preview.market} / {preview.freq}</dd>
         <dt className="text-slate-500">股票池</dt><dd>{preview.universe}</dd>
+        <dt className="text-slate-500">预测标签</dt><dd>当日收盘 → {preview.prediction_horizon ?? 1} 个交易日后收盘；回测/验证沿用</dd>
         {preview.algorithm.key === 'rdagent' && <><dt className="text-slate-500">挖掘方向</dt><dd className="whitespace-pre-wrap break-words">{preview.direction || '未填写'}{preview.directions.length > 0 ? `；类别：${preview.directions.join('、')}（${preview.direction_mode === 'random' ? '随机选择' : preview.direction_mode === 'quota' ? '配额加权选择' : '按首项选择'}）` : ''}</dd></>}
         {preview.direction_weighting === 'blankness' && <><dt className="text-slate-500">随机口径</dt><dd>按本人在该股票池的历史提交次数使用 1/(1+n) 加权，提交时抽取；历史不可用时明确记录均匀兜底。种子及候选权重保存在任务详情。</dd></>}
         {preview.direction_quota && <><dt className="text-slate-500">配额预演</dt><dd>{preview.direction_quota.available ? `三档名额 ${preview.direction_quota.slots.explore}/${preview.direction_quota.slots.exploit}/${preview.direction_quota.slots.mutate}（探索/优选/变异），已打分 ${preview.direction_quota.directions.length} 条候选` : `暂不可用：${preview.direction_quota.error ?? '方向史或饱和数据读取出错'}，提交时将退回历史空白度加权`}</dd></>}

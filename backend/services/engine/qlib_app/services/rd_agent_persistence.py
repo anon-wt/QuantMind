@@ -149,6 +149,7 @@ class RDAgentFactorPersistence:
         universe: str | None = None,
         factor_formulation: str | None = None,
         data_source: str | None = None,
+        date_range: str | None = None,
     ) -> None:
         """保存 RD-Agent 生成的因子"""
         meta_json = json.dumps(metadata or {}, ensure_ascii=False)
@@ -157,10 +158,10 @@ class RDAgentFactorPersistence:
                 text("""
                     INSERT INTO rd_agent_factors
                         (factor_id, factor_name, factor_code, status, user_id, tenant_id, metadata_json,
-                         market, universe, factor_formulation, data_source)
+                         market, universe, factor_formulation, data_source, date_range)
                     VALUES
                         (:factor_id, :factor_name, :factor_code, 'pending', :user_id, :tenant_id, :metadata_json,
-                         :market, :universe, :factor_formulation, :data_source)
+                         :market, :universe, :factor_formulation, :data_source, :date_range)
                     ON CONFLICT (factor_id) DO UPDATE SET
                         factor_name = EXCLUDED.factor_name,
                         factor_code = EXCLUDED.factor_code,
@@ -177,6 +178,7 @@ class RDAgentFactorPersistence:
                     "universe": universe,
                     "factor_formulation": factor_formulation,
                     "data_source": data_source,
+                    "date_range": date_range,
                 },
             )
 

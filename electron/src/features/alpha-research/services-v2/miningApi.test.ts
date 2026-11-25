@@ -40,6 +40,7 @@ describe('factor mining API', () => {
     expect(url).toBe('/alpha-agent/evolve');
     expect(body).toEqual({
       algorithm: 'statistical',
+      prediction_horizon: 1,
       market: 'a_share',
       universe: 'csi500',
       data_source: 'qlib_bin',
@@ -89,13 +90,14 @@ describe('factor mining API', () => {
     client.post.mockResolvedValue({ data: { code: 200, data: { task_id: 'gp-1', status: 'queued' } } });
     const params = {
       direction: '', algorithm: 'gp' as const,
+      predictionHorizon: 5,
       miningStart: '2023-01-01', miningEnd: '2023-12-31',
       gpConfig: { population_size: 16, generations: 3, seed: 7 },
     };
     await previewMining(params as Parameters<typeof previewMining>[0]);
     await startMining(params as Parameters<typeof startMining>[0], 'gp-request-key');
     expect(client.post.mock.calls[0][1]).toEqual(client.post.mock.calls[1][1]);
-    expect(client.post.mock.calls[1][1]).toMatchObject({ algorithm: 'gp', gp_config: params.gpConfig, auto_materialize: false });
+    expect(client.post.mock.calls[1][1]).toMatchObject({ algorithm: 'gp', prediction_horizon: 5, gp_config: params.gpConfig, auto_materialize: false });
     expect(client.post.mock.calls[1][2].headers['Idempotency-Key']).toEqual(expect.any(String));
   });
 

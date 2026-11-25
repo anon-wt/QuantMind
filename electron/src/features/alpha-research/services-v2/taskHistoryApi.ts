@@ -37,6 +37,8 @@ export interface MiningTaskHistoryPage {
 }
 
 export interface StatisticalMiningResult {
+  prediction_horizon?: number;
+  label_spec?: { horizon: number; expression: string };
   gp_search?: {
     evaluated_formulas: number;
     warning: string;

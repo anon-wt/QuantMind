@@ -6,7 +6,7 @@ const FIELDS: Array<[keyof GPMiningOptions, string, number, number, number]> = [
   ['top_k', '保留因子数', 1, 16, 1], ['max_depth', '公式深度', 2, 6, 1],
   ['crossover_rate', '交叉概率', 0, 1, 0.05], ['mutation_rate', '变异概率', 0, 1, 0.05],
   ['complexity_penalty', '复杂度惩罚', 0, 0.01, 0.0001], ['seed', '随机种子', 0, 2147483647, 1],
-  ['horizon', '预测周期（交易日）', 1, 20, 1], ['min_days', '最少有效 IC 日', 5, 1000, 1],
+  ['min_days', '最少有效 IC 日', 5, 1000, 1],
 ];
 
 export function GPOptionsPanel({ value, onChange, disabled = false }: { value: GPMiningOptions; onChange: (value: GPMiningOptions) => void; disabled?: boolean }) {

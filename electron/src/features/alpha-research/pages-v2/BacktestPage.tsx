@@ -357,7 +357,7 @@ export const BacktestPage: React.FC<{ initialFactorId?: string }> = ({ initialFa
           <BarChart3 className="h-5 w-5 text-primary" />
           回测中心
         </h1>
-        <p className="text-xs text-muted-foreground mt-0.5">提交本人因子的 A 股日频回测或样本外验证，任务和结果只对当前账号可见。</p>
+        <p className="text-xs text-muted-foreground mt-0.5">回测与验证自动继承因子挖掘时的预测周期；IC 按该周期收益计算，组合曲线按不重叠持有期计算。</p>
       </header>
 
       {backendAvailable === false && (
@@ -542,6 +542,7 @@ export const BacktestPage: React.FC<{ initialFactorId?: string }> = ({ initialFa
                         <div className="font-semibold truncate">{job.kind === 'validate' ? '样本外验证 · ' : '回测 · '}{job.request.factor_ids?.length ? `批量 ${job.request.factor_ids.length} 个因子` : name || job.request.factor_id || '本人因子'}</div>
                         <div className="text-xs text-muted-foreground mt-1">
                           {job.job_id} · {UNIVERSES.find(([value]) => value === job.request.universe)?.[1] ?? job.request.universe ?? 'A 股'}
+                          {' · '}预测 {job.request.label_spec?.horizon ?? 1} 个交易日
                           {' · '}{job.created_at ? formatDateTime(job.created_at) : '提交时间未知'}
                         </div>
                       </div>

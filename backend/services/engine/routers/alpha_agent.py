@@ -300,6 +300,11 @@ async def start_evolution(
     }
     if isinstance(payload, MiningSubmitRequest):
         values.update(payload.model_dump(exclude_none=True))
+    from backend.services.engine.alpha_agent.label_contract import normalize_request
+    try:
+        values = normalize_request(values)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     from backend.services.engine.alpha_agent.algorithm_registry import (
         AlgorithmError, resolve_algorithm,
     )
@@ -395,6 +400,7 @@ async def start_evolution(
             llm_overrides=llm_config.llm_env_overrides(),
             tenant_id=auth_tenant_id,
             datasets=values.get("datasets"),
+            prediction_horizon=values["prediction_horizon"],
             **{key: values.get(key) for key in (
                 "mining_start", "mining_end", "valid_start", "valid_end"
             )},
@@ -1132,7 +1138,11 @@ async def preview_mining(request: Request, payload: dict):
         parsed = MiningSubmitRequest.model_validate(payload)
     except Exception as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    values = parsed.model_dump(exclude_none=True)
+    from backend.services.engine.alpha_agent.label_contract import normalize_request, label_spec
+    try:
+        values = normalize_request(parsed.model_dump(exclude_none=True))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     algorithm_key = values.get("algorithm", "rdagent")
     from backend.services.engine.alpha_agent.direction_sampling import clean_directions
 
@@ -1278,6 +1288,8 @@ async def preview_mining(request: Request, payload: dict):
             "window": window_preview,
             "requires_llm": algorithm.uses_llm,
             "statistical_config": statistical_config,
+            "prediction_horizon": values["prediction_horizon"],
+            "label_spec": label_spec(values["prediction_horizon"]),
             "gp_config": GPConfig.model_validate(values.get("gp_config") or {}).model_dump() if algorithm.key == "gp" else None,
         },
     }
@@ -1464,7 +1476,11 @@ async def _dispatch_mining_directions(payload, request: Request, *, selection_ba
         )
         # OSS-ADAPT：单容器无 mining_remote admission 快照，data_snapshot 置空；
         # 落库后由 engine 内队列泵（factor-mining-queue）本地执行。
+        request_parameters["prediction_horizon"] = payload.prediction_horizon
         parameters = dict(request_parameters)
+        from backend.services.engine.alpha_agent.label_contract import label_spec
+        parameters["prediction_horizon"] = payload.prediction_horizon
+        parameters["label_spec"] = label_spec(payload.prediction_horizon)
         parameters["seed_factors"] = item_seed_factors
         try:
             from backend.services.engine.alpha_agent.resource_budget import (

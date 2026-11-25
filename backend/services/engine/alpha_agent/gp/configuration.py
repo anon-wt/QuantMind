@@ -22,7 +22,7 @@ class GPConfig(BaseModel):
     mutation_rate: float = Field(0.25, ge=0, le=1)
     complexity_penalty: float = Field(0.0001, ge=0, le=0.01)
     seed: int = Field(42, ge=0, le=2**31 - 1, strict=True)
-    horizon: int = Field(1, ge=1, le=20, strict=True)
+    horizon: int = Field(1, ge=1, le=250, strict=True)
     min_names: int = Field(10, ge=3, le=1000, strict=True)
     min_days: int = Field(40, ge=5, le=1000, strict=True)
     dedup_corr: float = Field(0.95, gt=0, le=1)

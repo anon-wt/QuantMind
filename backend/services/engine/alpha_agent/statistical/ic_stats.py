@@ -80,9 +80,9 @@ def forward_returns(panel: pd.DataFrame, horizon: int) -> pd.Series:
     """
     if horizon < 1:
         raise ValueError(f"horizon 必须是正整数（收到 {horizon!r}）")
-    close = panel["close"]
-    fwd = close.groupby(level=1).shift(-horizon) / close - 1
-    return fwd.rename(f"fwd_ret_{horizon}d")
+    from ..label_contract import forward_returns as build_labels
+
+    return build_labels(panel["close"], horizon)
 
 
 def _corr_by_day(df: pd.DataFrame, x: str, y: str) -> pd.Series:

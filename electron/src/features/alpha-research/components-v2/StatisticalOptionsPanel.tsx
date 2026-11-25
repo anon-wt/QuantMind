@@ -94,14 +94,6 @@ export const StatisticalOptionsPanel: React.FC<{
       <summary className="cursor-pointer font-semibold text-slate-600">统计挖掘参数</summary>
       <fieldset disabled={disabled} className="mt-3 max-h-[45vh] space-y-3 overflow-y-auto pr-1">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          <label className="space-y-1 text-slate-500">预测周期（交易日，逗号分隔）
-            <input aria-label="预测周期" className={inputClass} value={drafts.horizons ?? value.horizons?.join(', ') ?? ''}
-              onChange={(event) => {
-                const text = event.target.value;
-                setDraft('horizons', text);
-                onChange({ ...value, horizons: text.trim() ? text.split(/[,，\s]+/).map((item) => item ? Number(item) : Number.NaN) : undefined });
-              }} />
-          </label>
           <label className="space-y-1 text-slate-500">中性化
             <select aria-label="中性化" className={inputClass} value={value.neutralize ?? 'industry'} onChange={(event) => onChange({ ...value, neutralize: event.target.value as StatisticalMiningOptions['neutralize'] })}>
               <option value="none">不进行中性化</option><option value="industry">行业中性</option><option value="industry_size">行业与市值中性</option>

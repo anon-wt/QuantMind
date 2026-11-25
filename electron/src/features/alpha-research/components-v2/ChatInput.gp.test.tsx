@@ -27,7 +27,7 @@ it('requires dates and submits reviewed GP parameters without an LLM prompt', as
   } });
   const onSubmit = vi.fn();
   const onPreview = vi.fn().mockResolvedValue({
-    algorithm: { key: 'gp', name: 'GP 遗传编程' }, gp_config: { ...defaults, seed: 7 },
+    algorithm: { key: 'gp', name: 'GP 遗传编程' }, gp_config: { ...defaults, seed: 7, horizon: 5 }, prediction_horizon: 5,
     window: { mode: 'server_default' }, datasets: {},
   });
   render(<Provider store={store}><ChatInput onSubmit={onSubmit} onPreview={onPreview} /></Provider>);
@@ -38,11 +38,12 @@ it('requires dates and submits reviewed GP parameters without an LLM prompt', as
   fireEvent.change(screen.getByLabelText('GP挖掘开始日期'), { target: { value: '2023-01-01' } });
   fireEvent.change(screen.getByLabelText('GP挖掘结束日期'), { target: { value: '2023-12-31' } });
   fireEvent.change(screen.getByLabelText('GP 随机种子'), { target: { value: '7' } });
+  fireEvent.change(screen.getByLabelText('统一预测周期'), { target: { value: '5' } });
   expect(submit).toHaveProperty('disabled', false);
   fireEvent.click(submit);
   await screen.findByRole('dialog');
-  expect(onPreview).toHaveBeenCalledWith(expect.objectContaining({ algorithm: 'gp', gpConfig: { ...defaults, seed: 7 } }));
+  expect(onPreview).toHaveBeenCalledWith(expect.objectContaining({ algorithm: 'gp', predictionHorizon: 5, gpConfig: { ...defaults, seed: 7, horizon: 5 } }));
   expect(onSubmit).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button', { name: '确认并开始' }));
-  await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ algorithm: 'gp', autoMaterialize: false, gpConfig: { ...defaults, seed: 7 } })));
+  await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ algorithm: 'gp', predictionHorizon: 5, autoMaterialize: false, gpConfig: { ...defaults, seed: 7, horizon: 5 } })));
 });

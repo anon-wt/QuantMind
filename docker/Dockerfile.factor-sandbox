@@ -1,0 +1,8 @@
+# Reuse an existing local dependency image; no package/network installation.
+ARG BASE_IMAGE=quantmind-oss:latest
+FROM ${BASE_IMAGE}
+LABEL quantmind.user_code_sandbox="true"
+WORKDIR /tmp
+HEALTHCHECK NONE
+ENTRYPOINT []
+CMD ["python"]

@@ -130,6 +130,7 @@ export const ResearchDirectionsDialog: React.FC<ResearchDirectionsDialogProps> =
       market: 'a_share' as const,
       universe,
       loop_n: rounds,
+      prediction_horizon: config.predictionHorizon ?? 1,
       data_source: config.dataSource ?? 'qlib_bin',
       freq: 'day' as const,
       datasets: config.datasets,

@@ -138,6 +138,9 @@ class RDLoopWrapper:
             "Hypothesis and reason should also be in Chinese.\n"
         )
         direction = getattr(self, "_direction", "")
+        from backend.services.engine.alpha_agent.label_contract import label_spec
+        target = label_spec(int(os.getenv("QM_PREDICTION_HORIZON", "1")))
+        suffix += f"\n统一预测标签 LABEL0: {target['expression']}；预测周期 {target['horizon']} 个交易日，从当日收盘计。\n"
         if direction:
             suffix += (
                 "\n\n====== 研究方向 / Research Direction ======\n"
@@ -188,6 +191,9 @@ class RDLoopWrapper:
 
     def _create_loop(self):
         """创建 FactorRDLoop 实例"""
+        from .label_adapter import install_label_contract
+
+        install_label_contract()
         from rdagent.app.qlib_rd_loop.conf import FactorBasePropSetting
         from rdagent.app.qlib_rd_loop.factor import FactorRDLoop
         from rdagent.core.utils import import_class

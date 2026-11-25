@@ -106,6 +106,22 @@ def test_gp_dispatch_preserves_seed_and_does_not_request_llm(endpoint):
     llm.assert_not_called()
 
 
+@pytest.mark.parametrize("algorithm", ["statistical", "gp"])
+def test_forecast_period_reaches_numeric_runner(endpoint, algorithm):
+    client, submitted, _ = endpoint
+    response = client.post(
+        "/evolve",
+        json={**request_body(), "algorithm": algorithm, "prediction_horizon": 5},
+    )
+    assert response.status_code == 200
+    values = submitted.call_args.args[1]
+    assert values["prediction_horizon"] == 5
+    if algorithm == "statistical":
+        assert values["horizons"] == [5]
+    else:
+        assert values["gp_config"]["horizon"] == 5
+
+
 @pytest.mark.parametrize(
     "change",
     [

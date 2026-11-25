@@ -106,6 +106,7 @@ class EvolutionTask:
     market: str = "a_share"
     data_source: str = ""
     datasets: tuple[str, ...] = ()
+    prediction_horizon: int = 1
     mining_start: str | None = None
     mining_end: str | None = None
     valid_start: str | None = None
@@ -264,6 +265,7 @@ class AlphaAgentLauncher:
         llm_overrides: dict[str, str] | None = None,
         tenant_id: str = "default",
         datasets: list[str] | None = None,
+        prediction_horizon: int = 1,
         mining_start: str | None = None,
         mining_end: str | None = None,
         valid_start: str | None = None,
@@ -275,6 +277,9 @@ class AlphaAgentLauncher:
         优先于容器全局 env 注入子进程。
         """
         from backend.services.engine.alpha_agent.hw_lock import assert_factor_mining_hardware
+        from backend.services.engine.alpha_agent.label_contract import horizon
+
+        prediction_horizon = horizon(prediction_horizon)
 
         assert_factor_mining_hardware()
 
@@ -283,6 +288,7 @@ class AlphaAgentLauncher:
             task_id=task_id, user_id=user_id, market=market,
             universe=universe, loop_n=loop_n, data_source=data_source or "",
             tenant_id=tenant_id, datasets=tuple(datasets or ()),
+            prediction_horizon=prediction_horizon,
             mining_start=mining_start, mining_end=mining_end,
             valid_start=valid_start, valid_end=valid_end,
         )
@@ -391,6 +397,7 @@ class AlphaAgentLauncher:
             loop_n=loop_n,
             data_source=data_source or "",
             datasets=task_datasets,
+            prediction_horizon=params_snapshot.get("prediction_horizon", 1),
             universe_symbols=source_snapshot.get("universe_symbols"),
             **task_windows,
             status=TaskStatus.QUEUED,
@@ -535,6 +542,7 @@ class AlphaAgentLauncher:
         task.mining_end = params_snapshot.get("mining_end")
         task.valid_start = params_snapshot.get("valid_start")
         task.valid_end = params_snapshot.get("valid_end")
+        task.prediction_horizon = params_snapshot.get("prediction_horizon", 1)
         source_snapshot = record.get("data_snapshot") or {}
         if isinstance(source_snapshot, str):
             source_snapshot = json.loads(source_snapshot)
@@ -632,6 +640,7 @@ class AlphaAgentLauncher:
             "universe": task.universe,
             "data_source": task.data_source,
             "datasets": list(task.datasets),
+            "prediction_horizon": task.prediction_horizon,
             "mining_start": task.mining_start,
             "mining_end": task.mining_end,
             "valid_start": task.valid_start,
@@ -714,6 +723,7 @@ class AlphaAgentLauncher:
                 "market": task.market,
                 "data_source": task.data_source,
                 "datasets": list(task.datasets),
+                "prediction_horizon": task.prediction_horizon,
                 "mining_start": task.mining_start,
                 "mining_end": task.mining_end,
                 "valid_start": task.valid_start,
@@ -754,6 +764,7 @@ class AlphaAgentLauncher:
                         market=data.get("market", "a_share"),
                         data_source=data.get("data_source", ""),
                         datasets=tuple(data.get("datasets") or ()),
+                        prediction_horizon=data.get("prediction_horizon", 1),
                         mining_start=data.get("mining_start"),
                         mining_end=data.get("mining_end"),
                         valid_start=data.get("valid_start"),
@@ -877,6 +888,12 @@ class AlphaAgentLauncher:
         from backend.services.engine.rd_agent.llm_env import build_llm_env
         # 最后执行：确保 LITELLM_* 与 OPENAI_* 的最终取值一致，不再被后续步骤改写
         build_llm_env(env)
+        from backend.services.engine.alpha_agent.label_contract import horizon
+        from backend.services.engine.alpha_agent.mining_windows import build_mining_window_env
+
+        env.update(build_mining_window_env(task.mining_start, task.mining_end, task.valid_start, task.valid_end))
+
+        env["QM_PREDICTION_HORIZON"] = str(horizon(task.prediction_horizon))
         return env
 
     async def _run_evolution(

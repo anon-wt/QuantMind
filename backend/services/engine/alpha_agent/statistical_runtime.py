@@ -37,6 +37,9 @@ def _task_store():
 
 
 async def submit_statistical(request: Request, values: dict, algorithm, owner: dict):
+    from .label_contract import label_spec, normalize_request
+
+    values = normalize_request(values)
     from backend.services.engine.alpha_agent.launcher import get_launcher
     from backend.services.engine.alpha_agent.public_task import public_task
     from backend.services.engine.alpha_agent.resource_budget import submit_budget
@@ -74,6 +77,8 @@ async def submit_statistical(request: Request, values: dict, algorithm, owner: d
         raise HTTPException(400, "不支持的数值挖掘算法")
     params = {
         "algorithm": algorithm_key,
+        "prediction_horizon": values["prediction_horizon"],
+        "label_spec": label_spec(values["prediction_horizon"]),
         "market": "a_share",
         "universe": values.get("universe", "all_a"),
         "data_source": "qlib_bin",
@@ -216,6 +221,10 @@ def result_factors(task_id: str, fingerprint: str, params: dict, result: dict):
             "evidence": report,
             "rank_icir": report.get("icir"),
         }
+        from .label_contract import label_spec
+
+        metadata["label_spec"] = label_spec(params.get("prediction_horizon") or report.get("best_horizon") or (params.get("gp_config") or {}).get("horizon", 1))
+        metadata["prediction_horizon"] = metadata["label_spec"]["horizon"]
         if algorithm_key == "gp":
             metadata["gp_expression"] = report["gp_expression"]
             metadata["gp_config"] = params["gp_config"]
@@ -257,6 +266,7 @@ async def run_statistical(launcher, record: dict):
         task_id=task_id,
         **owner,
         algorithm=record.get("algorithm", "statistical"),
+        prediction_horizon=params.get("prediction_horizon", 1),
         market="a_share",
         universe=record["universe"],
         data_source="qlib_bin",
@@ -450,6 +460,8 @@ async def run_statistical(launcher, record: dict):
                 fingerprint = frozen["execution_fingerprint"]
                 rows = result_factors(task_id, fingerprint, params, result)
                 result.update(
+                    label_spec=params.get("label_spec"),
+                    prediction_horizon=params.get("prediction_horizon", 1),
                     algorithm=record.get("algorithm", "statistical"),
                     task_id=task_id,
                     market="a_share",

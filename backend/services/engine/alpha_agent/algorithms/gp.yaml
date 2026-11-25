@@ -2,7 +2,7 @@ key: gp
 name: GP 遗传编程挖掘
 vendor: QuantMind
 desc: 通过种群选择、交叉与变异搜索白名单量价公式；使用挖掘区间 RankIC、稳定性与复杂度惩罚评分，独立样本外数据不参与选优。
-version: quantmind-gp/1.0
+version: quantmind-gp/1.1
 enabled: true
 tags: [gp, genetic-programming, no-llm]
 markets: [a_share]

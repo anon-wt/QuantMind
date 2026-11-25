@@ -246,6 +246,8 @@ _TASK_ENVELOPE_PARAMS = frozenset(
         "direction",
         "auto_materialize",
         "gp_config",
+        "prediction_horizon",
+        "label_spec",
     }
 )
 

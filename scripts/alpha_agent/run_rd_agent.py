@@ -51,6 +51,8 @@ async def persist_factors(factors: list[dict], task_id: str, user_id: str, marke
                 "task_id": task_id,
                 "category": f.get("category", market),
             }
+            from backend.services.engine.alpha_agent.label_contract import label_spec
+            metadata["label_spec"] = label_spec(int(os.getenv("QM_PREDICTION_HORIZON", "1")))
             if f.get("formulation"):
                 metadata["formulation"] = f["formulation"]
             if f.get("description"):
@@ -63,6 +65,7 @@ async def persist_factors(factors: list[dict], task_id: str, user_id: str, marke
                 factor_name=f["name"],
                 factor_code=f.get("code", ""),
                 user_id=user_id,
+                tenant_id=os.getenv("QM_FACTOR_TENANT_ID", "default"),
                 metadata=metadata,
                 market=market,
                 universe=universe,
@@ -189,7 +192,8 @@ try:
         close = price_df.iloc[:, 0]
 
     # Compute forward returns
-    returns = close.groupby(level=1).pct_change().shift(-1)
+    from backend.services.engine.alpha_agent.label_contract import forward_returns
+    returns = forward_returns(close, int(os.getenv("QM_PREDICTION_HORIZON", "1")))
 
     # Align factor and returns
     # 因子结果为 MultiIndex(datetime, instrument) + 单列：直接取首列，
@@ -414,6 +418,8 @@ def main():
         # 回测窗口默认近一年（仅 A 股；其他市场数据日历不同，保持全样本）
         if args.market == "a_share":
             ic_start, ic_end = _near_one_year_window()
+            ic_start = os.getenv("QM_MINING_WINDOW_START") or ic_start
+            ic_end = os.getenv("QM_MINING_WINDOW_END") or ic_end
             logger.info("IC window (recent 1y): %s ~ %s", ic_start, ic_end)
         else:
             ic_start, ic_end = None, None
@@ -437,6 +443,10 @@ def main():
                         "task_id": args.task_id,
                         "category": f.get("category", args.market),
                     }
+                    from backend.services.engine.alpha_agent.label_contract import label_spec
+                    metadata["algorithm"] = "rdagent"
+                    metadata["label_spec"] = label_spec(int(os.getenv("QM_PREDICTION_HORIZON", "1")))
+                    metadata["prediction_horizon"] = metadata["label_spec"]["horizon"]
                     if f.get("formulation"):
                         metadata["formulation"] = f["formulation"]
                     if f.get("description"):
@@ -473,10 +483,12 @@ def main():
                         factor_name=f["name"],
                         factor_code=f.get("code", ""),
                         user_id=args.user_id,
+                        tenant_id=os.getenv("QM_FACTOR_TENANT_ID", "default"),
                         metadata=metadata,
                         market=args.market,
                         universe=args.universe,
                         factor_formulation=f.get("formulation", ""),
+                        date_range=(f"{os.getenv('QM_MINING_WINDOW_START')}/{os.getenv('QM_MINING_WINDOW_END')}" if os.getenv('QM_MINING_WINDOW_START') else f"{ic_start}/{ic_end}"),
                     )
                     await p.update_factor_metrics(
                         factor_id=fid,

@@ -88,6 +88,7 @@ export interface FactorJob {
     end_date?: string;
     data_source?: 'qlib_bin' | 'h5';
     cost_model?: FactorCostModelSnapshot;
+    label_spec?: { horizon: number; expression: string };
     validation_context?: {
       kind: 'out_of_sample_validation';
       training_window: { start_date: string; end_date: string };

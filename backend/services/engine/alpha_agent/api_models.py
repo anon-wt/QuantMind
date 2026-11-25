@@ -19,6 +19,7 @@ class MiningSubmitRequest(StatisticalOverrides):
     model_config = ConfigDict(extra="forbid")
     algorithm: Literal["rdagent", "statistical", "gp"] | None = None
     gp_config: GPConfig | None = None
+    prediction_horizon: int | None = Field(None, ge=1, le=250, strict=True)
     market: Literal["a_share"] | None = None
     universe: str | None = Field(None, min_length=1, max_length=64)
     loop_n: int | None = Field(None, ge=1, le=20, strict=True)
@@ -113,6 +114,7 @@ class DirectionBatchDispatchRequest(BaseModel):
     directions: list[str] = Field(min_length=1, max_length=10)
     market: Literal["a_share"] = "a_share"
     universe: str = Field(default="all_a", min_length=1, max_length=128)
+    prediction_horizon: int = Field(1, ge=1, le=250, strict=True)
     loop_n: int = Field(default=3, ge=1, le=20, strict=True)
     data_source: Literal["", "qlib_bin", "parquet"] = ""
     freq: Literal["day"] = "day"

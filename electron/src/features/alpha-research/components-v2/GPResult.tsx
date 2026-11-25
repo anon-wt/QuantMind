@@ -6,6 +6,7 @@ const number = (value: number | null | undefined) => value == null ? '—' : val
 export function GPResult({ result }: { result: StatisticalMiningResult }) {
   return <section className="space-y-3" aria-label="GP 遗传编程结果">
     <h4 className="font-medium">GP 遗传编程结果 · {result.selected.length} 个入选因子</h4>
+    <p className="text-xs text-muted-foreground">预测周期 {result.prediction_horizon ?? result.label_spec?.horizon ?? 1} 个交易日，从当日收盘计。</p>
     <p className="text-xs text-amber-700">{result.gp_search?.warning}</p>
     <p className="text-xs text-muted-foreground">实际评估 {result.gp_search?.evaluated_formulas ?? 0} 个不同公式；样本外数据未参与遗传搜索与排序。</p>
     <div className="max-h-60 overflow-auto"><table className="w-full text-xs"><thead><tr><th>代数</th><th>累计公式数</th><th>最佳适应度</th><th>最佳 RankIC</th></tr></thead>

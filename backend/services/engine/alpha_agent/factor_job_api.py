@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from backend.services.engine.auth_context import get_authenticated_identity
 from backend.shared.secret_redaction import redact_data, redact_text
 from backend.shared.utc_datetime import to_utc_iso
+from .label_contract import factor_label
 from backend.services.engine.alpha_agent.factor_jobs import (
     AlphaFactorJobPersistence,
     FactorJobIdempotencyConflict,
@@ -254,6 +255,7 @@ def _factor_job_report_markdown(job: dict) -> str:
         f"- 股票池：{universe}",
         f"- 窗口：{_report_cell(start)} 至 {_report_cell(end)}",
         f"- 数据源：{_report_cell(request.get('data_source') or '历史任务')}",
+        f"- 预测周期：{_report_cell((request.get('label_spec') or {}).get('horizon', 1))} 个交易日；当日收盘至周期末收盘收益",
         f"- 冻结双边成本率：{cost_text}",
         "",
         "## 结果摘要",
@@ -383,6 +385,7 @@ def _public(job: dict) -> dict:
             "data_source",
             "cost_model",
             "validation_context",
+            "label_spec",
         )
         if key in request
     }
@@ -482,6 +485,7 @@ async def submit_factor_backtest(
         raise HTTPException(status_code=413, detail="Factor code exceeds 256 KiB")
     try:
         kind = _factor_job_kind(factor_code, alpha_router, factor.get("metadata"))
+        selected_label = factor_label(factor)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if kind == "unknown":
@@ -551,6 +555,7 @@ async def submit_factor_backtest(
         "factor_code": factor_code,
         "factor_code_sha256": hashlib.sha256(factor_code.encode("utf-8")).hexdigest(),
         "factor_revision_no": factor_revision_no,
+        "label_spec": selected_label,
         "factor_kind": kind,
         "universe": universe,
         "universe_symbols": universe_symbols,
@@ -1297,6 +1302,7 @@ async def submit_factor_batch(
                     factor_code.encode("utf-8")
                 ).hexdigest(),
                 "factor_revision_no": factor_revision_no,
+                "label_spec": factor_label(factor),
                 "factor_kind": factor_kind,
                 "universe": payload.universe,
                 "universe_symbols": universe_symbols,

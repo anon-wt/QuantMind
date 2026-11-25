@@ -69,7 +69,7 @@ _REGIME_MIN_WEAK_DAYS = 15
 
 @dataclass(frozen=True)
 class StatisticalConfig:
-    horizons: tuple[int, ...] = (1, 5, 10, 20)
+    horizons: tuple[int, ...] = (1,)
     top_k: int = 5
     min_names_per_day: int = _ic.DEFAULT_MIN_NAMES_PER_DAY
     min_valid_days: int = _ic.DEFAULT_MIN_VALID_DAYS
@@ -503,7 +503,14 @@ def run_statistical_mining(
         neutralize = "none"
 
     emit("data", f"前向收益（周期 {cfg.horizons}）")
-    fwd = {h: _ic.forward_returns(panel, h) for h in cfg.horizons}
+    # A selection-window label may never consume prices from OOS.
+    training_panel = panel.loc[panel.index.get_level_values(0) <= pd.Timestamp(mining_end)]
+    fwd = {h: _ic.forward_returns(training_panel, h).reindex(panel.index) for h in cfg.horizons}
+    if has_oos:
+        validation_panel = panel.loc[panel.index.get_level_values(0) <= pd.Timestamp(valid_end)]
+        for h in cfg.horizons:
+            oos_labels = _ic.forward_returns(validation_panel, h).reindex(panel.index)
+            fwd[h] = fwd[h].where(~in_oos, oos_labels)
 
     active = tuple(c for c in _candidates.CANDIDATES if c.key not in cooled_keys)
     active_keys = {c.key for c in active}

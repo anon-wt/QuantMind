@@ -100,6 +100,7 @@ export interface ResearchMiningBatchRequest {
   market: 'a_share';
   universe: string;
   loop_n: number;
+  prediction_horizon?: number;
   data_source?: 'qlib_bin' | 'parquet';
   freq?: 'day';
   datasets?: string[];

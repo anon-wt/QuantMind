@@ -446,7 +446,9 @@ def run_container(
             command=[
                 "python",
                 "-m",
-                "backend.shared.sandbox_entrypoint",
+                ("backend.services.engine.alpha_agent.factor_values_sandbox"
+                 if sandbox_mode == "factor" and factor_result_mode == "functional_values"
+                 else "backend.shared.sandbox_entrypoint"),
                 "rdagent" if sandbox_mode == "rdagent" else sandbox_mode,
             ],
             name=sandbox_name,

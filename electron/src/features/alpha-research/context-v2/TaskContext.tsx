@@ -214,6 +214,7 @@ function resolveMiningParams(config: TaskConfig): MiningStartParams {
     algorithm: config.algorithm ?? 'rdagent',
     statisticalConfig: config.algorithm === 'statistical' ? config.statisticalConfig : undefined,
     gpConfig: config.algorithm === 'gp' ? config.gpConfig : undefined,
+    predictionHorizon: config.predictionHorizon ?? 1,
     autoMaterialize: false,
     miningStart: config.miningStart,
     miningEnd: config.miningEnd,

@@ -8,8 +8,8 @@ from dataclasses import dataclass
 from collections.abc import Mapping
 from typing import Any
 
-RD_AGENT_VERSION = "quantmind-rd/1.0"
-STATISTICAL_VERSION = "quantmind-statistical/2.0"
+RD_AGENT_VERSION = "quantmind-rd/1.1"
+STATISTICAL_VERSION = "quantmind-statistical/2.1"
 PARAMETER_KEYS = frozenset(
     {
         "algorithm",
@@ -55,6 +55,8 @@ PARAMETER_KEYS = frozenset(
         "net_ic_cost_rate",
         "auto_materialize",
         "gp_config",
+        "prediction_horizon",
+        "label_spec",
     }
 )
 

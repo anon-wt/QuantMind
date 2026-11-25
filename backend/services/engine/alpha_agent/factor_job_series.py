@@ -22,6 +22,7 @@ def build_factor_series(
     *,
     cost_rate: float,
     max_points: int = 750,
+    prediction_horizon: int = 1,
 ) -> dict:
     """Build gross/net portfolio, IC, quantile and turnover series.
 
@@ -29,6 +30,9 @@ def build_factor_series(
     mining rule: round-trip cost is charged on the fraction of the current long
     book that entered since the previous eligible rebalance date.
     """
+    from .label_contract import horizon
+
+    prediction_horizon = horizon(prediction_horizon)
     if not isinstance(max_points, int) or not 2 <= max_points <= 750:
         raise ValueError("max_points must be an integer between 2 and 750")
     if not np.isfinite(cost_rate) or cost_rate < 0:
@@ -55,6 +59,9 @@ def build_factor_series(
     counts = frame.groupby(level=0).size()
     eligible = counts[counts >= 10].index
     frame = frame.loc[frame.index.get_level_values(0).isin(eligible)]
+    daily_ic_all = daily_ic(frame["factor"], frame["return"], min_names=10)
+    rebalance_dates = frame.index.get_level_values(0).unique().sort_values()[::prediction_horizon]
+    frame = frame.loc[frame.index.get_level_values(0).isin(rebalance_dates)]
     empty: dict = {
         "dates": [],
         "nav_long": [],
@@ -67,7 +74,10 @@ def build_factor_series(
         "turnover": [],
         "coverage": [],
         "q_curves": {f"q{i}": [] for i in range(1, 6)},
-        "basis": "equal_weight_top_30pct_net_next_day_returns",
+        "basis": "equal_weight_top_30pct_net_forward_period_returns",
+        "prediction_horizon": prediction_horizon,
+        "rebalance_days": prediction_horizon,
+        "date_basis": "signal_date",
         "cost_rate": float(cost_rate),
         "turnover_basis": "new_names_fraction_of_current_long_book",
     }
@@ -132,21 +142,25 @@ def build_factor_series(
         "q_curves": {
             key: _json_values(values, positions) for key, values in bucket_navs.items()
         },
-        "basis": "equal_weight_top_30pct_net_next_day_returns",
+        "basis": "equal_weight_top_30pct_net_forward_period_returns",
+        "prediction_horizon": prediction_horizon,
+        "rebalance_days": prediction_horizon,
+        "date_basis": "signal_date",
         "cost_rate": float(cost_rate),
         "turnover_basis": "new_names_fraction_of_current_long_book",
     }
     # Lifecycle decisions need an exact daily IC tail. The chart series above is
     # downsampled for bounded UI payloads and must never be used for classification.
+    lifecycle_dates = daily_ic_all.index
     lifecycle_positions = np.arange(
-        max(0, len(full_dates) - MAX_LIFECYCLE_POINTS), len(full_dates)
+        max(0, len(lifecycle_dates) - MAX_LIFECYCLE_POINTS), len(lifecycle_dates)
     )
     draw["lifecycle_ic_series"] = {
         "dates": [
             day.date().isoformat() if hasattr(day, "date") else str(day)[:10]
-            for day in full_dates[lifecycle_positions]
+            for day in lifecycle_dates[lifecycle_positions]
         ],
-        "ic": _json_values(daily_ic_frame["ic"], lifecycle_positions),
+        "ic": _json_values(daily_ic_all["ic"], lifecycle_positions),
     }
     # Retain a commonly inspected spread series without representing it as a
     # tradable short portfolio in the cost model.

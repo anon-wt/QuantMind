@@ -75,6 +75,7 @@ export const SampledDirectionsDialog: React.FC<{ config: TaskConfig; quotaSuppor
     const payload: SampledDirectionRequest = pending ?? {
       batch_id: createResearchMiningBatchId(), directions, market: 'a_share', universe: config.universe ?? 'all_a',
       loop_n: rounds, selection_mode: mode, num_directions: count, data_source: config.dataSource ?? 'qlib_bin',
+      prediction_horizon: config.predictionHorizon ?? 1,
       datasets: config.datasets, freq: 'day', mining_start: config.miningStart, mining_end: config.miningEnd,
       valid_start: config.validStart, valid_end: config.validEnd,
     };

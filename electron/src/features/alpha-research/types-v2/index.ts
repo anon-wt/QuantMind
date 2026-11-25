@@ -109,6 +109,7 @@ export interface TaskConfig {
   algorithm?: 'rdagent' | 'statistical' | 'gp';
   statisticalConfig?: StatisticalMiningOptions;
   gpConfig?: GPMiningOptions;
+  predictionHorizon?: number;
   autoMaterialize?: boolean;
   miningStart?: string;
   miningEnd?: string;
