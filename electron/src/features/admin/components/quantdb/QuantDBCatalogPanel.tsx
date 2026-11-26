@@ -54,36 +54,48 @@ export function QuantDBCatalogPanel({ connected, onPreview, refreshSignal = 0, e
     const [submitting, setSubmitting] = useState(false);
     const [activeJob, setActiveJob] = useState<QuantDBSyncJob | null>(null);
     const [cancelling, setCancelling] = useState(false);
-    const hasAppliedDefaultSelection = useRef(false);
+    const loadedProvider = useRef<string | null>(null);
+    const catalogRequestId = useRef(0);
 
     // Diff state
     const [diff, setDiff] = useState<QuantDBDiffResult | null>(null);
     const [diffLoading, setDiffLoading] = useState(false);
 
     const loadCatalog = useCallback(async () => {
+        const requestId = ++catalogRequestId.current;
         setLoading(true);
         try {
             const resp = await dataPlatformService.getQuantDBCatalog();
+            if (requestId !== catalogRequestId.current) return;
+            const nextProvider = resp.provider ?? 'quantdb';
             // 过滤掉前端隐藏的大类（如债券/ETF），使它们不展示、不参与勾选
+            const visibleDatasets = (resp.datasets ?? []).filter((d) => (
+                !HIDDEN_GROUP_IDS.has(d.group) && !HIDDEN_DATASETS.has(d.dataset)
+                && (nextProvider !== 'doris' || d.available === true)
+            ));
             const visibleGroups = (resp.groups ?? []).filter(
-                (g) => !HIDDEN_GROUP_IDS.has(g.id),
+                (g) => !HIDDEN_GROUP_IDS.has(g.id)
+                    && (nextProvider !== 'doris' || visibleDatasets.some((d) => d.group === g.id)),
             );
-            const visibleDatasets = (resp.datasets ?? []).filter(
-                (d) => !HIDDEN_GROUP_IDS.has(d.group) && !HIDDEN_DATASETS.has(d.dataset),
+            const selectableNames = new Set(
+                visibleDatasets.filter((d) => d.available !== false).map((d) => d.dataset),
             );
+            const providerChanged = loadedProvider.current !== nextProvider;
+            loadedProvider.current = nextProvider;
             setGroups(visibleGroups);
             setDatasets(visibleDatasets);
             setDataDir(resp.data_dir ?? '');
-            setProvider(resp.provider ?? 'quantdb');
-            setSelected((current) => current.filter((name) => visibleDatasets.some((row) => row.dataset === name && row.available !== false)));
-            if (!hasAppliedDefaultSelection.current) {
-                setSelected(visibleDatasets.filter((dataset) => dataset.available !== false).map((dataset) => dataset.dataset));
-                hasAppliedDefaultSelection.current = true;
-            }
+            setProvider(nextProvider);
+            setSelected((current) => providerChanged
+                ? Array.from(selectableNames)
+                : current.filter((name) => selectableNames.has(name)));
+            if (providerChanged) setDiff(null);
         } catch (error: unknown) {
-            message.error(`加载数据集目录失败: ${describeError(error)}`);
+            if (requestId === catalogRequestId.current) {
+                message.error(`加载数据集目录失败: ${describeError(error)}`);
+            }
         } finally {
-            setLoading(false);
+            if (requestId === catalogRequestId.current) setLoading(false);
         }
     }, []);
 
@@ -99,15 +111,12 @@ export function QuantDBCatalogPanel({ connected, onPreview, refreshSignal = 0, e
     }, []);
 
     useEffect(() => {
-        loadCatalog();
         loadLatestJob();
-    }, [loadCatalog, loadLatestJob]);
+    }, [loadLatestJob]);
 
     // 外部同步（预览抽屉等）完成后刷新目录统计
     useEffect(() => {
-        if (refreshSignal > 0) {
-            loadCatalog();
-        }
+        loadCatalog();
     }, [refreshSignal, loadCatalog]);
 
     // 任务运行期间轮询进度；完成/取消时刷新目录统计
@@ -201,11 +210,11 @@ export function QuantDBCatalogPanel({ connected, onPreview, refreshSignal = 0, e
     // Build a diff lookup for table column
     const diffByDataset = useMemo(() => {
         const map = new Map<string, string>();
-        if (diff) {
+        if (diff && provider === 'quantdb') {
             diff.datasets.forEach(d => map.set(d.dataset, d.status));
         }
         return map;
-    }, [diff]);
+    }, [diff, provider]);
 
     const toggleGroup = (groupId: string, checked: boolean) => {
         const names = (datasetsByGroup.get(groupId) ?? []).filter((d) => d.available !== false).map((d) => d.dataset);
@@ -242,7 +251,9 @@ export function QuantDBCatalogPanel({ connected, onPreview, refreshSignal = 0, e
             render: (name: string, row) => (
                 <Space direction="vertical" size={0}>
                     <Text strong>{name}</Text>
-                    <Text type="secondary" className="text-xs">{row.dataset}</Text>
+                    <Text type="secondary" className="text-xs break-all">
+                        {provider === 'doris' ? row.rel_dir : row.dataset}
+                    </Text>
                 </Space>
             ),
         },
@@ -318,7 +329,9 @@ export function QuantDBCatalogPanel({ connected, onPreview, refreshSignal = 0, e
         },
     ];
 
-    const totalSizeMb = groups.reduce((sum, g) => sum + g.size_mb, 0);
+    const totalSizeMb = provider === 'doris'
+        ? datasets.reduce((sum, row) => sum + row.size_mb, 0)
+        : groups.reduce((sum, group) => sum + group.size_mb, 0);
     const isJobRunning = activeJob?.status === 'running' || activeJob?.status === 'cancelling';
 
     const headerExtra = (
@@ -352,12 +365,19 @@ export function QuantDBCatalogPanel({ connected, onPreview, refreshSignal = 0, e
                 />
             </div>
 
+            {provider === 'doris' && !loading && datasets.length === 0 && (
+                <Alert type="info" showIcon message="请在个人中心 → 数据平台 → Doris 配置数据集表映射" />
+            )}
+
             <Collapse
                 defaultActiveKey={groups.length > 0 ? [groups[0].id] : []}
                 items={groups.map((group) => {
                     const members = datasetsByGroup.get(group.id) ?? [];
                     const names = members.filter((d) => d.available !== false).map((d) => d.dataset);
                     const checkedCount = names.filter((n) => selected.includes(n)).length;
+                    const groupSizeMb = provider === 'doris'
+                        ? members.reduce((sum, row) => sum + row.size_mb, 0)
+                        : group.size_mb;
                     return {
                         key: group.id,
                         label: (
@@ -370,7 +390,7 @@ export function QuantDBCatalogPanel({ connected, onPreview, refreshSignal = 0, e
                                     <Text strong>{group.name}</Text>
                                 </Checkbox>
                                 <Tag>{members.filter((d) => d.synced).length}/{members.length} 已同步</Tag>
-                                <Text type="secondary" className="text-xs">{formatSize(group.size_mb)}</Text>
+                                <Text type="secondary" className="text-xs">{formatSize(groupSizeMb)}</Text>
                             </Space>
                         ),
                         children: (
@@ -413,7 +433,7 @@ export function QuantDBCatalogPanel({ connected, onPreview, refreshSignal = 0, e
                             icon={<CloudSyncOutlined />}
                             onClick={triggerSync}
                             loading={submitting}
-                            disabled={!connected || selected.length === 0 || isJobRunning}
+                            disabled={loading || !connected || selected.length === 0 || isJobRunning}
                             className="flex-1"
                         >
                             {isJobRunning

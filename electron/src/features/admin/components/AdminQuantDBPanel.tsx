@@ -120,7 +120,7 @@ export const AdminQuantDBPanel: React.FC = () => {
                         <Tag color={provider !== 'quantdb' ? 'blue' : info?.connected ? 'green' : 'red'} className="m-0 rounded-full px-2.5 font-bold border-none">
                             {provider === 'datayes' ? 'Datayes 本地数据' : provider === 'doris' ? 'Doris 本地数据' : info?.connected ? '已连接' : '未连接'}
                         </Tag>
-                        <Button size="small" icon={<ReloadOutlined />} loading={loading} onClick={() => { loadInfo(); }} className="rounded-lg">
+                        <Button size="small" icon={<ReloadOutlined />} loading={loading} onClick={bumpCatalogRefresh} className="rounded-lg">
                             刷新
                         </Button>
                     </Space>
