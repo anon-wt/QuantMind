@@ -511,6 +511,8 @@ export const FactorLibraryPage: React.FC<{
     if (!isAuthenticated || isAuthenticating) return;
     const generation = sessionGenerationRef.current;
     const controller = new AbortController();
+    setError(null);
+    setPoolGraphSummary('');
     setPoolGraphLoading(true);
     try {
       const universe = universeFilter === 'all' ? undefined : universeFilter;
@@ -518,10 +520,12 @@ export const FactorLibraryPage: React.FC<{
       const edges = await listFactorPoolEdges({ universe, limit: 1000 }, controller.signal);
       if (generation !== sessionGenerationRef.current) return;
       setPoolEdges(edges);
-      setPoolGraphSummary(`检查 ${summary.factor_count} 个本人池因子，发现 ${summary.edge_count} 条公式相似关系`);
+      setPoolGraphSummary(summary.factor_count < 2
+        ? `公式相似重算完成。当前范围有 ${summary.factor_count} 个本人池因子，至少需要同一股票池的 2 个因子。`
+        : `公式相似重算完成。已检查 ${summary.factor_count} 个本人池因子，发现 ${summary.edge_count} 条公式相似关系。`);
     } catch {
       if (generation === sessionGenerationRef.current && !controller.signal.aborted) {
-        setError('重算本人因子谱系失败，请稍后重试');
+        setError('重算公式相似失败，请稍后重试');
       }
     } finally {
       if (generation === sessionGenerationRef.current) setPoolGraphLoading(false);
@@ -532,6 +536,8 @@ export const FactorLibraryPage: React.FC<{
     if (!isAuthenticated || isAuthenticating) return;
     const generation = sessionGenerationRef.current;
     const controller = new AbortController();
+    setError(null);
+    setPoolGraphSummary('');
     setPoolGraphLoading(true);
     try {
       const universe = universeFilter === 'all' ? undefined : universeFilter;
@@ -539,7 +545,9 @@ export const FactorLibraryPage: React.FC<{
       const edges = await listFactorPoolEdges({ universe, limit: 1000 }, controller.signal);
       if (generation !== sessionGenerationRef.current) return;
       setPoolEdges(edges);
-      setPoolGraphSummary(`检查 ${summary.panel_count} 个本人面板，发现 ${summary.edge_count} 条值相关关系（|ρ| ≥ 0.50）`);
+      setPoolGraphSummary(summary.panel_count < 2
+        ? `值相关重算完成。当前范围有 ${summary.panel_count} 个可用面板，至少需要同一股票池的 2 个因子完成回测并保存面板。`
+        : `值相关重算完成。已检查 ${summary.panel_count} 个可用面板，发现 ${summary.edge_count} 条值相关关系（|ρ| ≥ 0.50）。`);
     } catch {
       if (generation === sessionGenerationRef.current) setError('本人因子值相关性重算失败，请重试');
     } finally {
@@ -1005,6 +1013,10 @@ export const FactorLibraryPage: React.FC<{
         </div>
       </div>
 
+      <p role="status" className="empty:hidden rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-foreground">
+        {poolGraphLoading ? '正在重算本人因子池…' : poolGraphSummary}
+      </p>
+
       {/* Error Banner */}
       {error && (
         <div className="glass rounded-lg p-4 flex items-center gap-3 bg-warning/10 border-warning/50">
@@ -1059,11 +1071,11 @@ export const FactorLibraryPage: React.FC<{
             <CardTitle className="text-sm flex items-center gap-2">
               <GitBranch className="h-4 w-4 text-primary" /> 本人因子研究关系
             </CardTitle>
-            {poolGraphSummary && <p className="text-xs text-muted-foreground">{poolGraphSummary}；公式边使用 Jaccard ≥ 0.60，值相关边使用逐日截面秩相关（每天至少 20 个重叠标的、至少 5 个有效日，|ρ| ≥ 0.50），每个因子最多保留 3 个邻居。</p>}
+            <p className="text-xs text-muted-foreground">同一股票池内，公式相似使用 Jaccard ≥ 0.60。值相关使用逐日截面秩相关（每天至少 20 个重叠标的、至少 5 个有效日，|ρ| ≥ 0.50）。</p>
           </CardHeader>
           <CardContent className="space-y-2">
             {poolEdges.length === 0 ? (
-              <p className="text-xs text-muted-foreground">当前股票池没有达到阈值的关系边。值相关边需要本人因子先完成回测并保存面板。</p>
+              <p className="text-xs text-muted-foreground">当前筛选范围没有已保存的关系。</p>
             ) : poolEdges.map((edge) => (
               <div key={`${edge.universe}:${edge.method}:${edge.relation}:${edge.src_factor_id}:${edge.dst_factor_id}`} className="flex items-center justify-between gap-3 rounded-md bg-secondary/30 px-3 py-2 text-sm">
                 <span className="truncate">
