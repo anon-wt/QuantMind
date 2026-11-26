@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Alert, Button, Checkbox, Input, Modal, Progress, Space, Table, Tag, Typography, message } from 'antd';
+import { Alert, Button, Checkbox, Input, Modal, Progress, Select, Space, Table, Tag, Typography, message } from 'antd';
 import { CloudDownloadOutlined, CloudServerOutlined, FileSearchOutlined, ReloadOutlined, StopOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { AShareInitCatalog, AShareInitJob, AShareSource, dataPlatformService } from '../../services/dataPlatformService';
@@ -18,6 +18,7 @@ export function AShareInitialization({ onScan, onInitialized }: { onScan: () => 
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
+  const [dataType, setDataType] = useState('all');
   const [startDate, setStartDate] = useState('2016-01-01');
   const [endDate, setEndDate] = useState(dayjs().format('YYYY-MM-DD'));
   const [incremental, setIncremental] = useState(true);
@@ -29,6 +30,7 @@ export function AShareInitialization({ onScan, onInitialized }: { onScan: () => 
   const enabled = providers.filter((provider) => provider.enabled);
   const sources = enabled.map((provider) => provider.source);
   const availableDatasets = (catalog?.datasets ?? []).filter((row) => row.sources.some((source) => sources.includes(source)));
+  const dataTypes = [...new Map(availableDatasets.map(row => [row.data_type ?? row.group, row.data_type_name ?? row.group])).entries()];
   const hasDatayes = sources.includes('datayes');
   const hasDoris = sources.includes('doris');
   const missingToken = enabled.some((provider) => !provider.configured);
@@ -91,6 +93,7 @@ export function AShareInitialization({ onScan, onInitialized }: { onScan: () => 
 
   const openInitialization = () => {
     if (!running) {
+      setDataType('all');
       setSelected(availableDatasets.map((row) => row.dataset));
     }
     setOpen(true);
@@ -204,9 +207,11 @@ export function AShareInitialization({ onScan, onInitialized }: { onScan: () => 
           {(hasDatayes || hasDoris) && <Space wrap><span>同步范围</span><Input aria-label="同步开始日期" type="date" value={startDate} min="1990-01-01" max={endDate} disabled={running} onChange={(event) => setStartDate(event.target.value)} />
             <span>至</span><Input aria-label="同步结束日期" type="date" value={endDate} min={startDate} max={dayjs().format('YYYY-MM-DD')} disabled={running} onChange={(event) => setEndDate(event.target.value)} /></Space>}
           {hasDoris && <Checkbox checked={incremental} disabled={running} onChange={(event) => setIncremental(event.target.checked)}>Doris 按本地成功进度增量同步</Checkbox>}
-          <Table size="small" pagination={false} rowKey="dataset" dataSource={availableDatasets}
-            rowSelection={{ selectedRowKeys: selected, onChange: (keys) => setSelected(keys as string[]), getCheckboxProps: (row) => ({ disabled: running || !row.sources.some((source) => sources.includes(source)) }) }}
+          <Select aria-label="初始化数据类型筛选" value={dataType} onChange={setDataType} style={{minWidth:160}} options={[{value:'all',label:'全部数据类型'}, ...dataTypes.map(([value,label]) => ({value,label}))]} />
+          <Table size="small" pagination={false} rowKey="dataset" dataSource={availableDatasets.filter(row => dataType === 'all' || (row.data_type ?? row.group) === dataType)}
+            rowSelection={{ preserveSelectedRowKeys: true, selectedRowKeys: selected, onChange: (keys) => setSelected(keys as string[]), getCheckboxProps: (row) => ({ disabled: running || !row.sources.some((source) => sources.includes(source)) }) }}
             columns={[
+              { title: '数据类型', dataIndex: 'data_type_name', render:(value:string, row) => value ?? row.group },
               { title: '数据集', dataIndex: 'name' },
               { title: '可用数据源', render: (_, row) => <Space>{row.sources.filter((source) => sources.includes(source)).map((source) => <Tag key={source}>{SOURCE_LABELS[source]}</Tag>)}{!row.sources.some((source) => sources.includes(source)) && <Tag>当前数据源不支持</Tag>}</Space> },
               { title: 'Datayes 覆盖说明', dataIndex: 'datayes_note', hidden: !hasDatayes },

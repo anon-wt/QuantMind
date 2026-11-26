@@ -294,10 +294,23 @@ class AllDatasetsClient(FakeClient):
                         "industryVersionCD": "v1",
                         "industryID": "industry-1",
                         "industryName1": "industry",
+                        "industryID1": "industry-1",
+                        "intoDate": "2020-01-01",
+                        "outDate": None,
                         "isNew": 1,
                     }
                 ]
             )
+        native = {
+            "market/getMktStockFactorsDateRangePro": {"tradeDate": "2024-01-02", "ROE": 0.1},
+            "equity/getDy1dExposureCNE6SW21": {"tradeDate": "20240102", "BETA": 0.2},
+            "equity/getSecST": {"tradeDate": "2024-01-02", "STflg": "ST"},
+            "master/getSecHalt": {"haltBeginTime": "2024-01-01 09:30:00", "haltEndTime": None},
+            "equity/getEquDiv": {"newPubDate": "2024-01-02", "endDate": "2023-12-31", "perCashDiv": 0.2},
+            "idx/getIdxConsCsi": {"secID": "000852.ZICN", "consID": "600000.XSHG", "consExchangeCD": "XSHG", "intoDate": "2020-01-01", "outDate": None},
+        }
+        if endpoint in native:
+            return pd.DataFrame([{**{"secID": "600000.XSHG"}, **native[endpoint]}])
         if endpoint == "idx/getIdxCloseWeight":
             return pd.DataFrame(
                 [

@@ -6,7 +6,7 @@ import type { DorisConfig, DorisConnection, DorisTableMapping } from '../../admi
 import { describeError } from '../../admin/components/quantdb/utils';
 
 const DEFAULT_CONNECTION: DorisConnection = {
-  host: '', port: 9030, database: '', user: '', table_prefix: 'hunter_ods_datayes_',
+  host: '', port: 9030, database: '', user: '', table_prefix: 'ods_datayes_',
   lookback_days: 7, mappings: {}, dataset_mappings: {},
 };
 const FACTOR_LABELS: Record<string, string> = {
@@ -27,6 +27,7 @@ export default function DorisSettings() {
   const [action, setAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [factorTables, setFactorTables] = useState<string[]>([]);
+  const [dataType, setDataType] = useState('all');
   const [fieldDataset, setFieldDataset] = useState<string | null>(null);
   const [fieldRows, setFieldRows] = useState<Array<{ source: string; target: string }>>([]);
   const busy = loading || action !== null;
@@ -37,7 +38,7 @@ export default function DorisSettings() {
     try {
       const value = await dataPlatformService.getDorisConfig();
       setConfig(value);
-      setForm(value.connection ?? DEFAULT_CONNECTION);
+      setForm(value.connection ?? {...DEFAULT_CONNECTION, mappings: value.preset_mappings ?? {}});
       setPassword('');
     } catch (err) {
       setError(dorisError(err));
@@ -90,6 +91,11 @@ export default function DorisSettings() {
     } }));
   };
   const rows = [...(config?.endpoints ?? []), ...(config?.factor_datasets ?? [])].map((key) => ({ key }));
+  const datasetRows = config?.datasets ?? [];
+  const dataTypes = [...new Map(datasetRows.map(row => [row.data_type ?? 'other', row.data_type_name ?? '其他'])).entries()];
+  const addPresets = () => setForm(current => ({...current, mappings: {...current.mappings,
+    ...Object.fromEntries(Object.entries(config?.preset_mappings ?? {}).map(([key, value]) => [key, current.mappings[key]?.table.trim() ? current.mappings[key] : value])),
+  }}));
   const setDatasetMapping = (key: string, patch: Partial<DorisTableMapping> & { columns?: Record<string, string> }) => {
     setForm((current) => ({ ...current, dataset_mappings: {
       ...current.dataset_mappings,
@@ -138,16 +144,20 @@ export default function DorisSettings() {
           <Button loading={action === 'discover'} disabled={busy && action !== 'discover'} onClick={() => void run('discover')}>发现并匹配表</Button>
           <Button type="primary" loading={action === 'save'} disabled={busy && action !== 'save'} onClick={() => void run('save')}>保存连接与映射</Button>
           <Button disabled={busy} onClick={() => void load()}>重新加载</Button>
+          {config?.preset_mappings && <Button disabled={busy} onClick={addPresets}>补全12项通联映射</Button>}
         </Space>
         <Typography.Paragraph type="secondary" className="text-xs !mb-0">
           密码仅保存在服务端，页面不回显。发现表会优先按填写的前缀匹配，也识别 ods_datayes_ 前缀；匹配完成后请保存。保存配置不会自动启用或同步数据。
         </Typography.Paragraph>
         <div className="rounded-xl border border-slate-100 p-3 space-y-3">
           <Typography.Text strong>表名 → 本地标准 Parquet → 字段映射</Typography.Text>
+          <Select aria-label="Doris 数据类型筛选" value={dataType} onChange={setDataType} style={{minWidth:150}} options={[{value:'all',label:'全部数据类型'}, ...dataTypes.map(([value,label]) => ({value,label}))]} />
           <Typography.Paragraph type="secondary" className="text-xs !mb-0">填写后优先使用本行映射，未配置的数据集继续使用下方接口表自动映射。文件路径由标准数据集确定，日期和股票代码会自动替换模板；未映射的其他字段按原名保留。</Typography.Paragraph>
-          <Table size="small" rowKey="dataset" dataSource={config?.datasets ?? []} pagination={{ pageSize: 6 }} scroll={{ x: 1050 }} columns={[
+          <Table size="small" rowKey="dataset" dataSource={datasetRows.filter(row => dataType === 'all' || row.data_type === dataType)} pagination={{ pageSize: 12 }} scroll={{ x: 1250 }} columns={[
+            { title: '数据类型', dataIndex: 'data_type_name', width: 100 },
             { title: '目标数据集', dataIndex: 'name', width: 120 },
-            { title: 'Doris 源表', width: 250, render: (_, row) => <Input aria-label={`${row.dataset} Doris 源表`} value={form.dataset_mappings?.[row.dataset]?.table ?? ''} disabled={busy} placeholder="留空使用接口自动映射" onChange={(e) => setDatasetMapping(row.dataset, { table: e.target.value })} /> },
+            { title: 'Datayes 接口', dataIndex: 'endpoint', width: 210, render:(value:string) => value ? <Typography.Text code className="text-[11px] break-all">{value}</Typography.Text> : '手动映射' },
+            { title: 'Doris 源表', width: 250, render: (_, row) => <><Input aria-label={`${row.dataset} Doris 源表`} value={form.dataset_mappings?.[row.dataset]?.table ?? ''} disabled={busy} placeholder={row.endpoint_key ? form.mappings[row.endpoint_key]?.table || row.doris_table || '留空使用接口自动映射' : '留空使用接口自动映射'} onChange={(e) => setDatasetMapping(row.dataset, { table: e.target.value })} />{row.endpoint_key && form.mappings[row.endpoint_key]?.table && <Typography.Text type="secondary" className="text-[11px] break-all">接口映射：{form.mappings[row.endpoint_key].table}</Typography.Text>}</> },
             { title: '本地 Parquet 文件路径', dataIndex: 'path', width: 300, render: (value: string) => <Typography.Text code className="text-[11px] break-all">{value}</Typography.Text> },
             { title: '日期字段', width: 135, render: (_, row) => <Input value={form.dataset_mappings?.[row.dataset]?.date_column ?? ''} disabled={busy} placeholder="自动识别" onChange={(e) => setDatasetMapping(row.dataset, { date_column: e.target.value || null })} /> },
             { title: '日期格式', width: 150, render: (_, row) => <Select className="w-full" disabled={busy} value={form.dataset_mappings?.[row.dataset]?.date_format ?? 'date'} options={[{ value: 'date', label: 'YYYY-MM-DD' }, { value: 'yyyymmdd', label: 'YYYYMMDD' }]} onChange={(value) => setDatasetMapping(row.dataset, { date_format: value })} /> },

@@ -342,7 +342,7 @@ export function QuantDBCatalogPanel({ connected, onPreview, refreshSignal = 0, e
             {!embedded && <div className="mb-3 flex justify-end">{headerExtra}</div>}
 
             {/* Diff summary card */}
-            <div className="mb-3" hidden={provider === 'doris'}>
+            <div className="mb-3" hidden={provider !== 'quantdb'}>
                 <QuantDBDiffSummary
                     diff={diff}
                     loading={diffLoading}
@@ -402,7 +402,10 @@ export function QuantDBCatalogPanel({ connected, onPreview, refreshSignal = 0, e
                 })}
             />
 
-            <div className="mt-4">
+            {provider === 'datayes' && (
+                <Text type="secondary" className="mt-4 block">在上方的 A 股引导初始化中选择 Datayes 同步日期范围。</Text>
+            )}
+            <div className="mt-4" hidden={provider === 'datayes'}>
                 <Space direction="vertical" className="w-full" size="small">
                     <Space className="w-full">
                         <Button

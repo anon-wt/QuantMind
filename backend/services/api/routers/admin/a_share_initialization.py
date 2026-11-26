@@ -20,7 +20,7 @@ from backend.services.engine.data_platform.modelscope_dataset_sync import (
     ModelScopeDatasetUnavailableError,
 )
 from backend.shared.data_source_config import list_sources
-from backend.shared.quantdb_datasets import DATASETS
+from backend.services.engine.data_platform.datayes_catalog import LOCAL_DATASETS as DATASETS, BY_DATASET, dataset_type
 from backend.shared.runtime_secrets import get_secret
 
 router = APIRouter(dependencies=[Depends(require_admin)])
@@ -110,6 +110,10 @@ def _catalog():
                 "dataset": spec.dataset,
                 "name": spec.name,
                 "group": spec.group,
+                "data_type": dataset_type(spec)[0],
+                "data_type_name": dataset_type(spec)[1],
+                "datayes_endpoint": "/" + BY_DATASET[spec.dataset].endpoint + ".json" if spec.dataset in BY_DATASET else None,
+                "doris_table": BY_DATASET[spec.dataset].table if spec.dataset in BY_DATASET else None,
                 "sources": (["quantdb"] if spec.dataset in PUBLIC_INITIALIZATION_DATASETS else [])
                 + (["datayes"] if spec.dataset in datayes_sync.SUPPORTED else [])
                 + (["doris"] if spec.dataset in doris_supported else []),

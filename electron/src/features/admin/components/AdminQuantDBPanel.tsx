@@ -72,14 +72,14 @@ export const AdminQuantDBPanel: React.FC = () => {
             const catalog = await dataPlatformService.getAShareInitCatalog();
             const selected = catalog.providers.find((item) => item.enabled)?.source ?? 'quantdb';
             setProvider(selected);
-            if (selected === 'doris') {
+            if (selected !== 'quantdb') {
                 setInfo(null);
                 return;
             }
             const resp = await dataPlatformService.getQuantDBInfo();
             setInfo(resp.quantdb);
         } catch (error: unknown) {
-            message.error(`获取 QuantDB 状态失败: ${describeError(error)}`);
+            message.error(`获取数据源状态失败: ${describeError(error)}`);
         } finally {
             setLoading(false);
         }
@@ -112,13 +112,13 @@ export const AdminQuantDBPanel: React.FC = () => {
             <SectionCard
                 index="02"
                 title="数据更新"
-                desc={provider === 'doris' ? 'Doris 本地数据集 · 按已保存映射增量同步' : 'QuantDB 状态与流量 · 数据集检查更新与增量同步'}
+                desc={provider === 'quantdb' ? 'QuantDB 状态与流量 · 数据集检查更新与增量同步' : '查看已同步的本地数据集'}
                 icon={<CloudSyncOutlined />}
                 tone="blue"
                 extra={
                     <Space size="small">
-                        <Tag color={provider === 'doris' ? 'blue' : info?.connected ? 'green' : 'red'} className="m-0 rounded-full px-2.5 font-bold border-none">
-                            {provider === 'doris' ? 'Doris 本地数据' : info?.connected ? '已连接' : '未连接'}
+                        <Tag color={provider !== 'quantdb' ? 'blue' : info?.connected ? 'green' : 'red'} className="m-0 rounded-full px-2.5 font-bold border-none">
+                            {provider === 'datayes' ? 'Datayes 本地数据' : provider === 'doris' ? 'Doris 本地数据' : info?.connected ? '已连接' : '未连接'}
                         </Tag>
                         <Button size="small" icon={<ReloadOutlined />} loading={loading} onClick={() => { loadInfo(); }} className="rounded-lg">
                             刷新
@@ -126,7 +126,7 @@ export const AdminQuantDBPanel: React.FC = () => {
                     </Space>
                 }
             >
-                <div hidden={provider === 'doris'}>
+                <div hidden={provider !== 'quantdb'}>
                 {info?.error && <Alert type="error" message={info.error} className="mb-4 rounded-xl" showIcon />}
 
                 {/* 状态行 */}

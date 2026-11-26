@@ -58,14 +58,19 @@ def _now_iso() -> str:
 # ---------------------------------------------------------------------------
 # 规格定义在 backend/shared/quantdb_datasets.py（供管理台与本地扫描脚本共用）
 from backend.shared.quantdb_datasets import DATASETS, DatasetSpec, GROUPS  # noqa: E402
+from backend.services.engine.data_platform.datayes_catalog import LOCAL_DATASETS, DATA_TYPES, EXTRA_DATASETS, dataset_type  # noqa: E402
 
-_BY_NAME = {ds.dataset: ds for ds in DATASETS}
+_BY_NAME = {ds.dataset: ds for ds in LOCAL_DATASETS}
 
 
 def _spec(dataset: str) -> DatasetSpec:
     spec = _BY_NAME.get(dataset)
     if spec is None:
         raise HTTPException(status_code=400, detail=f"未知数据集: {dataset}")
+    if spec in EXTRA_DATASETS:
+        from backend.services.engine.data_platform.a_share_sources import selected_source
+        if selected_source() == "quantdb":
+            raise HTTPException(400, "此数据集由 Datayes / Doris 提供，请切换数据源")
     return spec
 
 
@@ -128,18 +133,20 @@ def _dataset_stats(spec: DatasetSpec, root: Path) -> dict[str, Any]:
     return stats
 
 
-def _build_catalog_payload(root: Path) -> dict[str, Any]:
+def _build_catalog_payload(root: Path, provider="quantdb") -> dict[str, Any]:
     """同步组装目录载荷（含全量磁盘扫盘）。
 
     调用方必须经 asyncio.to_thread 执行，禁止在事件循环线程直接调用，
     否则单 worker 下 /health 会被长时间饿死并触发 watchdog 重启。
     """
     items = []
-    for spec in DATASETS:
+    for spec in DATASETS if provider == "quantdb" else LOCAL_DATASETS:
         items.append({
             "dataset": spec.dataset,
             "name": spec.name,
-            "group": spec.group,
+            "group": spec.group if provider == "quantdb" else dataset_type(spec)[0],
+            "data_type": dataset_type(spec)[0],
+            "data_type_name": dataset_type(spec)[1],
             "category_id": spec.category_id,
             "layout": spec.layout,
             "rel_dir": spec.rel_dir,
@@ -148,8 +155,14 @@ def _build_catalog_payload(root: Path) -> dict[str, Any]:
         })
 
     groups = []
-    for g in GROUPS:
+    group_specs = GROUPS if provider == "quantdb" else [
+        *({"id": key, "name": name, "category_id": str(i + 1)} for i, (key, name) in enumerate(DATA_TYPES)),
+        *(g for g in GROUPS if g["id"] not in dict(DATA_TYPES)),
+    ]
+    for g in group_specs:
         members = [it for it in items if it["group"] == g["id"]]
+        if not members:
+            continue
         groups.append({
             **g,
             "dataset_count": len(members),
@@ -173,14 +186,14 @@ async def get_catalog(current_user: dict = Depends(require_admin)):
         from backend.services.engine.data_platform.a_share_sources import read_data_root, selected_source
 
         root = read_data_root()
-        payload = await asyncio.to_thread(_build_catalog_payload, root)
+        payload = await asyncio.to_thread(_build_catalog_payload, root, selected_source())
         payload["provider"] = selected_source()
-        if payload["provider"] == "doris":
-            from backend.services.engine.data_platform.doris_source import supported_datasets
-            available = supported_datasets()
+        if payload["provider"] in {"doris", "datayes"}:
+            from backend.services.engine.data_platform import doris_source, datayes_sync
+            available = doris_source.supported_datasets() if payload["provider"] == "doris" else datayes_sync.SUPPORTED
             for row in payload["datasets"]:
                 row["available"] = row["dataset"] in available
-                row["provider"] = "doris"
+                row["provider"] = payload["provider"]
 
         return {
             "success": True,
@@ -334,8 +347,8 @@ async def preview_dataset(
     from backend.services.engine.data_platform.a_share_sources import read_data_root, selected_source
 
     root = read_data_root()
-    if selected_source() == "doris" and remote:
-        raise HTTPException(400, "Doris 数据仅从本地 Parquet 预览，请先同步对应数据集")
+    if selected_source() in {"doris", "datayes"} and remote:
+        raise HTTPException(400, "当前数据源仅从本地 Parquet 预览，请先同步对应数据集")
 
     file_path = None if remote else _pick_local_file(spec, root, symbol)
 
@@ -349,8 +362,8 @@ async def preview_dataset(
                 _get_client,
                 _to_qdb_symbol,
             )
-            if selected_source() == "doris":
-                raise HTTPException(404, "Doris 本地尚无此数据集，请先初始化或增量同步")
+            if selected_source() in {"doris", "datayes"}:
+                raise HTTPException(404, "当前数据源本地尚无此数据集，请先初始化或同步")
             client = _get_client()
             df = client.preview_as_df(
                 category_id=spec.category_id,
@@ -829,6 +842,7 @@ def _run_doris_sync_job(job_id, req, progress, cancelled):
     from backend.services.engine.data_platform import doris_source
 
     try:
+        root = doris_source.data_root()
         result = doris_source.sync_doris(
             req.datasets, date(2016, 1, 1), date.today(), progress=progress, should_cancel=cancelled,
         )
@@ -846,10 +860,10 @@ def _run_doris_sync_job(job_id, req, progress, cancelled):
             _job_update(job_id, pg_fill=refresh_stock_daily_latest(days=30, force=True))
         if req.with_qlib and not cancelled():
             from backend.services.engine.qlib_data_builder import ensure_qlib_cache
-            _job_update(job_id, qlib_cache={"status": "ok", "provider_uri": ensure_qlib_cache("CN", quantdb_dir=doris_source.data_root())})
+            _job_update(job_id, qlib_cache={"status": "ok", "provider_uri": ensure_qlib_cache("CN", quantdb_dir=root)})
         _job_update(job_id, status="cancelled" if cancelled() else "completed", stage="done", finished_at=_now_iso())
     except Exception:
-        _job_update(job_id, status="failed", error="Doris 同步失败，请检查连接、表映射及后端日志", finished_at=_now_iso())
+        _job_update(job_id, status="failed", error="Doris 同步失败，请检查数据源配置及后端日志", finished_at=_now_iso())
 
 
 @router.post("/sync-datasets")
@@ -867,6 +881,8 @@ async def sync_datasets(
         from backend.services.engine.data_platform.doris_source import supported_datasets
         if set(payload.datasets) - supported_datasets():
             raise HTTPException(400, "所选数据集尚未配置 Doris 表或字段映射")
+    if provider == "datayes":
+        raise HTTPException(400, "请在 A 股引导初始化中选择 Datayes 同步日期范围")
 
     job_id = f"qdb-{next(_job_counter)}"
     job = {

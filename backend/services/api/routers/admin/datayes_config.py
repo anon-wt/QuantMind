@@ -7,6 +7,7 @@ from pydantic import BaseModel, SecretStr
 
 from backend.services.api.user_app.middleware.auth import require_admin
 from backend.shared.runtime_secrets import get_secret, mask_secret, set_secret
+from backend.services.engine.data_platform.datayes_catalog import public_catalog
 
 router = APIRouter(dependencies=[Depends(require_admin)])
 
@@ -22,6 +23,7 @@ def _config_payload() -> dict:
         "data": {
             "token_configured": bool(token),
             "token_masked": mask_secret(token),
+            "datasets": public_catalog(),
             "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         },
     }

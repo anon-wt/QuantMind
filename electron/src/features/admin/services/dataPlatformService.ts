@@ -101,9 +101,21 @@ export interface QuantDBConfig {
     timestamp: string;
 }
 
+export interface SourceDatasetEntry {
+    dataset: string;
+    name: string;
+    data_type?: string;
+    data_type_name?: string;
+    path: string;
+    endpoint?: string;
+    endpoint_key?: string;
+    doris_table?: string;
+    note?: string;
+}
 export interface DatayesConfig {
     token_configured: boolean;
     token_masked: string;
+    datasets?: SourceDatasetEntry[];
     timestamp: string;
 }
 
@@ -131,12 +143,14 @@ export interface DorisConfig {
     supported_datasets: string[];
     endpoints: string[];
     factor_datasets: string[];
-    datasets: Array<{ dataset: string; name: string; path: string }>;
+    datasets: SourceDatasetEntry[];
+    source_catalog?: SourceDatasetEntry[];
+    preset_mappings?: Record<string, DorisTableMapping>;
 }
 export type AShareSource = 'quantdb' | 'datayes' | 'doris';
 export interface AShareInitCatalog {
     providers: Array<{ source: AShareSource; label: string; enabled: boolean; configured: boolean; root: string; dataset_count: number; local_dataset_count: number; scope_hint?: string; sync_hint?: string }>;
-    datasets: Array<{ dataset: string; name: string; group: string; sources: AShareSource[]; datayes_note: string; doris_note?: string }>;
+    datasets: Array<{ dataset: string; name: string; group: string; data_type?: string; data_type_name?: string; datayes_endpoint?: string | null; doris_table?: string | null; sources: AShareSource[]; datayes_note: string; doris_note?: string }>;
     timestamp: string;
 }
 export interface AShareInitJob {

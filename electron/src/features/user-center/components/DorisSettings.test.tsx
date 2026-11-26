@@ -56,4 +56,28 @@ describe('Doris personal data platform settings', () => {
     expect(screen.getByLabelText('Doris 主机地址')).toHaveValue('doris.test');
     expect(mocks.save).not.toHaveBeenCalled();
   });
+
+  it('adds the recommended date mapping and preserves existing endpoint mappings', async () => {
+    const existing = { table: 'custom_bars', date_column: 'business_day', date_format: 'date' };
+    const risk = { table: 'ods_datayes_getdy1dexposurecne6sw21', date_column: 'tradeDate', date_format: 'yyyymmdd' };
+    mocks.get.mockResolvedValue({
+      ...structuredClone(config),
+      connection: { ...config.connection, mappings: { getMktEqud: existing } },
+      preset_mappings: {
+        getMktEqud: { table: 'ods_datayes_getmktequd', date_column: 'tradeDate', date_format: 'date' },
+        getDy1dExposureCNE6SW21: risk,
+      },
+      datasets: [{
+        dataset: 'cne6_exposure', name: 'CNE6 风格暴露', data_type: 'risk', data_type_name: '风险暴露',
+        path: '7_risk_data/cne6_exposure/dt={YYYYMMDD}/data.parquet',
+      }],
+    });
+    render(<DorisSettings />);
+    expect(await screen.findByText('风险暴露')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '补全12项通联映射' }));
+    fireEvent.click(screen.getByRole('button', { name: '保存连接与映射' }));
+    await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({
+      mappings: { getMktEqud: existing, getDy1dExposureCNE6SW21: risk },
+    })));
+  });
 });

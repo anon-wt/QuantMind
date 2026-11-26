@@ -11,7 +11,7 @@ export default function DatayesSettings() {
         </div>
         <div>
           <h3 className="text-sm font-black text-slate-800 m-0">数据平台 (Datayes)</h3>
-          <p className="text-[11px] text-slate-400 m-0 leading-tight">通联数据商城的 A 股行情、基础资料和财务数据访问凭据</p>
+          <p className="text-[11px] text-slate-400 m-0 leading-tight">通联数据商城的行情、专业因子、风险暴露及基础数据访问凭据</p>
         </div>
       </div>
       <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-xs">

@@ -7,12 +7,12 @@
 
 ## 映射与文件
 
-- 自动接口映射：复用 `datayes_sync.py` 的 22 个数据集及字段/单位契约。
+- 自动接口映射：复用 `datayes_sync.py` 的 29 个数据集及字段/单位契约。
   按配置前缀匹配接口名，同时识别 `hunter_ods_datayes_`、`ods_datayes_`，
   实际表名以发现结果为准；缺少关联表的数据集不可选，不用空表冒充完整覆盖。
 - 自定义映射：配置「Doris 表 → 本地标准数据集 → 源字段到标准字段」。
   其优先级高于同一数据集的自动接口映射。未重命名的其他列保留，便于接入因子宽表。
-- 目标路径来自 `backend/shared/quantdb_datasets.py`，页面显示实际文件模板：
+- 目标路径来自共享 `DatasetSpec` 及 `datayes_catalog.py` 本地扩展，页面显示实际文件模板：
   分区 `dt={YYYYMMDD}/data.parquet`、标的 `{symbol}.parquet`、
   股票资料 `instrument_list.parquet` 等。禁止任意路径写入，保证现有读取契约。
 - 日线标准字段为 `symbol,time,open,high,low,close,volume,amount`；股票资料需
@@ -24,6 +24,23 @@
   因子缺少 OHLCV 时从同目录后复权日线补给；覆盖不完整则失败，不填造模型特征。
 - Doris 预置因子表映射是可选项，原始因子名称不等同于 QuantDB 专有因子。
   已有模型必须检查其特征定义；字段映射不负责重新计算或更改因子经济含义。
+
+## 通联标准 12 项
+
+完整分类及接口见 [DATAYES.md](DATAYES.md)。默认表名为 `ods_datayes_` + 小写接口名，
+使用连接所选数据库，例如 `hunter_ods.ods_datayes_getmktstockfactorsdaterangepro`。
+个人中心可按数据类型查看“接口 → 源表 → 本地 Parquet”，点击“补全12项通联映射”
+填入缺失项，已有手工映射保留；点击保存才生效，配置保存不自动同步或启用读取源。
+
+CNE6 的 `tradeDate` 使用 `yyyymmdd` 格式；分红使用 `newPubDate`；
+成分/行业使用 `intoDate/outDate`，停复牌使用 `haltBeginTime/haltEndTime`。
+区间查询采用重叠条件而非仅筛开始日期，以保留跨窗口有效记录。
+中证成分按证券、成员、生效日取 `updateTime/dt` 最新修订，再筛有效区间；
+不能只读最大 `dt` 分区，否则会丢失历史退出成分。
+
+新增专业因子和 CNE6 只保留源数值，不自动补入行情或混入 L1/L2；旧训练因子绑定及
+显式字段映射继续保留。前复权数据、技术派生和 Qlib 缓存仍按原有依赖单独准备，
+本次只提供后复权表不会被标记为已具备前复权缓存。
 
 ## 同步与读取
 

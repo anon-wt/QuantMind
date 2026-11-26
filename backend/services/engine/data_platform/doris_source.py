@@ -18,7 +18,16 @@ from pathlib import Path
 import pandas as pd
 from pydantic import BaseModel, Field, SecretStr, field_validator
 
-from backend.shared.quantdb_datasets import DATASETS
+from .datayes_catalog import (
+    LOCAL_DATASETS as DATASETS,
+    BY_ENDPOINT,
+    BY_DATASET,
+    EXTRA_DATASETS,
+    dataset_type,
+    preset_mappings,
+    public_catalog,
+    local_file_pattern as dataset_file_pattern,
+)
 from backend.shared.runtime_secrets import get_secret, set_secret
 from backend.shared.stock_utils import StockCodeUtil
 
@@ -39,6 +48,7 @@ ENDPOINTS = {
     "getCSIIdxWeightHS300",
     "getCSIIdxWeightZZ500",
     "getCSIIdxWeightZZ1000",
+    "getMktIdxd",  # historical saved mapping; new configurations use getMktIdxdCsi
 }
 FACTOR_BINDINGS = {"l1_factors", "l1_l2_factors", "factor_dictionary"}
 INTRADAY_DATASETS = {"min1_kline", "min5_kline", "tick_data"}
@@ -67,6 +77,7 @@ _SNAPSHOTS = {
     "getEquIndustry",
     "getBondConv",
     "getBondConvPriceChg",
+    "getSecHalt",
 }
 
 
@@ -127,7 +138,7 @@ class DorisConfigRequest(BaseModel):
     database: str = Field(min_length=1, max_length=128)
     user: str = Field(min_length=1, max_length=128)
     password: SecretStr | None = None
-    table_prefix: str = "hunter_ods_datayes_"
+    table_prefix: str = "ods_datayes_"
     lookback_days: int = Field(default=7, ge=1, le=365)
     mappings: dict[str, TableMapping] = Field(default_factory=dict)
     dataset_mappings: dict[str, DatasetMapping] = Field(default_factory=dict)
@@ -247,6 +258,8 @@ def supported_datasets(config: DorisConfigRequest | None = None) -> set[str]:
     if config is None:
         return set()
     available = set(config.mappings)
+    if "getMktIdxd" in available:
+        available.add("getMktIdxdCsi")
     basics = {"getEqu", "getTradeCal"}
     result = (
         {
@@ -292,6 +305,8 @@ def plan_datasets(datasets, config: DorisConfigRequest | None = None):
 
 def public_config() -> dict:
     config = load_config()
+    catalog = public_catalog()
+    native_rows = {row["dataset"]: row for row in catalog}
     return {
         "configured": config is not None,
         "connection": config.model_dump(exclude={"password"}) if config else None,
@@ -300,11 +315,16 @@ def public_config() -> dict:
         "supported_datasets": sorted(supported_datasets(config)),
         "endpoints": sorted(ENDPOINTS),
         "factor_datasets": sorted(FACTOR_BINDINGS),
+        "source_catalog": catalog,
+        "preset_mappings": preset_mappings(),
         "datasets": [
             {
                 "dataset": spec.dataset,
                 "name": spec.name,
                 "path": local_file_pattern(spec),
+                "data_type": dataset_type(spec)[0],
+                "data_type_name": dataset_type(spec)[1],
+                **native_rows.get(spec.dataset, {}),
             }
             for spec in DATASETS
             if spec.dataset in CUSTOM_DATASETS
@@ -314,6 +334,8 @@ def public_config() -> dict:
 
 class DorisClient:
     """用只读 SQL 实现既有 Datayes 取数契约，不接收任意 SQL。"""
+
+    supports_interval_history = True
 
     def __init__(
         self, config: DorisConfigRequest | None = None, should_cancel=lambda: False
@@ -412,7 +434,18 @@ class DorisClient:
             ):
                 table = names.get((prefix + endpoint).lower())
                 if table:
-                    mappings[endpoint] = TableMapping(table=table)
+                    native = BY_ENDPOINT.get(endpoint)
+                    mappings[endpoint] = TableMapping(
+                        table=table,
+                        **(
+                            {
+                                "date_column": native.date_column,
+                                "date_format": native.date_format,
+                            }
+                            if native
+                            else {}
+                        ),
+                    )
                     break
         factor_candidates = sorted(
             name
@@ -430,6 +463,8 @@ class DorisClient:
     def fetch(self, endpoint, **params) -> pd.DataFrame:
         name = endpoint.rsplit("/", 1)[-1]
         mapping = self.config.mappings.get(name)
+        if mapping is None and name == "getMktIdxdCsi":
+            mapping = self.config.mappings.get("getMktIdxd")
         if mapping is None:
             if name.startswith("getCSIIdxWeight"):
                 return pd.DataFrame()  # 仅指数权重接口的可选备用表。
@@ -439,7 +474,14 @@ class DorisClient:
         table = self._table_sql(mapping)
         if name in _SNAPSHOTS and "dt" in schema:
             conditions.append(f"`dt` = (SELECT MAX(`dt`) FROM {table})")
-        for key in ("secID", "ticker", "exchangeCD", "equTypeCD", "listStatusCD"):
+        for key in (
+            "secID",
+            "ticker",
+            "exchangeCD",
+            "equTypeCD",
+            "listStatusCD",
+            "industryVersionCD",
+        ):
             if params.get(key):
                 if key not in schema:
                     raise ValueError(f"Doris 表 {mapping.table} 缺少 {key} 字段")
@@ -447,23 +489,51 @@ class DorisClient:
                 conditions.append(f"`{key}` IN ({','.join(['%s'] * len(members))})")
                 values.extend(members)
         start = (
-            params.get("tradeDate")
+            params.get("_window_start")
+            or params.get("tradeDate")
             or params.get("beginDate")
             or params.get("beginPubDate")
             or params.get("publishDateBegin")
             or params.get("beginPublishDate")
+            or params.get("beginNewPubDate")
         )
         end = (
-            params.get("tradeDate")
+            params.get("_window_end")
+            or params.get("tradeDate")
             or params.get("endDate")
             or params.get("endPubDate")
             or params.get("publishDateEnd")
             or params.get("endPublishDate")
+            or params.get("endNewPubDate")
         )
+        base_conditions = list(conditions)
+        native = BY_ENDPOINT.get(name)
         if start or end:
-            column = mapping.date_column or _DATE_COLUMNS.get(name, "tradeDate")
+            column = (
+                mapping.date_column
+                or (native.date_column if native else None)
+                or _DATE_COLUMNS.get(name, "tradeDate")
+            )
             if column not in schema:
                 raise ValueError(f"Doris 表 {mapping.table} 缺少日期字段 {column}")
+        if native and native.interval_end and start and end:
+            if native.interval_end not in schema:
+                raise ValueError(
+                    f"Doris 表 {mapping.table} 缺少区间结束字段 {native.interval_end}"
+                )
+            conditions.append(f"`{identifier(column)}` < %s")
+            values.append(
+                (
+                    pd.to_datetime(str(end), format="%Y%m%d").date() + timedelta(days=1)
+                ).isoformat()
+            )
+            conditions.append(
+                f"(`{identifier(native.interval_end)}` >= %s OR `{identifier(native.interval_end)}` IS NULL OR `{identifier(native.interval_end)}` = '')"
+            )
+            values.append(
+                pd.to_datetime(str(start), format="%Y%m%d").date().isoformat()
+            )
+            start = end = None
         for operator, bound in ((">=", start), ("<", end)):
             if bound:
                 parsed = pd.to_datetime(str(bound), format="%Y%m%d").date()
@@ -482,7 +552,23 @@ class DorisClient:
         sql = f"SELECT * FROM {table}" + (
             " WHERE " + " AND ".join(conditions) if conditions else ""
         )
+        if (
+            name == "getIdxConsCsi"
+            and {"secID", "consID", "intoDate", "updateTime", "dt"} <= schema.keys()
+        ):
+            order = "`updateTime` DESC, `dt` DESC"
+            sql = (
+                f"SELECT * FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY `secID`,`consID`,`intoDate` ORDER BY {order}) AS `_qm_rank` FROM {table}"
+                + (" WHERE " + " AND ".join(base_conditions) if base_conditions else "")
+                + ") AS `history` WHERE `_qm_rank`=1"
+                + (
+                    " AND " + " AND ".join(conditions[len(base_conditions) :])
+                    if len(conditions) > len(base_conditions)
+                    else ""
+                )
+            )
         result = self._query(sql, tuple(values))
+        result = result.drop(columns=["_qm_rank"], errors="ignore")
         if "dt" in result:
             result = result.sort_values("dt", kind="stable")
         if name == "getEqu" and not result.empty:
@@ -513,9 +599,12 @@ class DorisClient:
             if source not in schema:
                 raise ValueError(f"Doris 表 {mapping.table} 缺少映射字段 {source}")
         spec = next(spec for spec in DATASETS if spec.dataset == dataset)
+        native = BY_DATASET.get(dataset)
         column = (
             mapping.date_column
             or mapping.columns.get("time")
+            or (mapping.columns.get("halt_begin") if dataset == "stock_halts" else None)
+            or (native.date_column if native and native.date_column in schema else None)
             or next(
                 (
                     name
@@ -537,6 +626,15 @@ class DorisClient:
         sql = f"SELECT * FROM {table}"
         if dataset == "instrument_detail" and "dt" in schema:
             sql += f" WHERE `dt` = (SELECT MAX(`dt`) FROM {table})"
+        elif column and native and native.interval_end:
+            ending = mapping.columns.get(
+                "halt_end" if dataset == "stock_halts" else "effective_to",
+                native.interval_end,
+            )
+            if column not in schema or ending not in schema:
+                raise ValueError("历史区间数据需要映射开始和结束字段")
+            sql += f" WHERE `{identifier(column)}` < %s AND (`{identifier(ending)}` >= %s OR `{identifier(ending)}` IS NULL)"
+            values = ((end + timedelta(days=1)).isoformat(), start.isoformat())
         elif column:
             if column not in schema:
                 raise ValueError(f"Doris 表 {mapping.table} 缺少日期字段 {column}")
@@ -564,20 +662,37 @@ class DorisClient:
 
 
 def local_file_pattern(spec) -> str:
-    if spec.layout == "partition":
-        filename = "dt={YYYYMMDD}/data.parquet"
-    elif spec.layout == "symbol":
-        filename = "{symbol}.parquet"
-    else:
-        filename = {
-            "instrument_detail": "instrument_list",
-            "sector_concept": "sector_members",
-        }.get(spec.dataset, spec.dataset) + ".parquet"
-    return f"{spec.rel_dir}/{filename}"
+    return dataset_file_pattern(spec)
 
 
 def normalize_standard(frame: pd.DataFrame, dataset: str) -> pd.DataFrame:
     frame = frame.copy()
+    if dataset in {spec.dataset for spec in EXTRA_DATASETS}:
+        # Restore vendor aliases for the shared native normalizer while keeping
+        # the user's canonical mappings and all unmapped factor columns.
+        native = BY_DATASET[dataset]
+        aliases = {
+            native.date_column: "time",
+            "outDate": "effective_to",
+            "industryID1": "industry_code",
+            "industryName1": "industry_name",
+            "industryVersionCD": "industry_version",
+            "STflg": "st_flag",
+            "haltBeginTime": "halt_begin",
+            "haltEndTime": "halt_end",
+            "perCashDiv": "cash_dividend_per_share",
+            "perShareDivRatio": "bonus_share_ratio",
+            "perShareTransRatio": "transfer_share_ratio",
+            "endDate": "m_timetag",
+        }
+        for original, canonical in aliases.items():
+            if original and original not in frame and canonical in frame:
+                frame[original] = frame[canonical]
+        if dataset == "sw_l1_industry" and "industryVersionCD" not in frame:
+            frame["industryVersionCD"] = "010321"
+        result = datayes_sync.normalize(frame, dataset)
+        result["data_source"] = "doris"
+        return result
     if "symbol" in frame:
         frame["symbol"] = frame["symbol"].map(
             lambda value: (

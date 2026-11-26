@@ -3,6 +3,7 @@ import { Alert, Button, Input, Space, Tag, Typography, message } from 'antd';
 import { ReloadOutlined, SaveOutlined } from '@ant-design/icons';
 import { dataPlatformService, DatayesConfig } from '../../services/dataPlatformService';
 import { describeError } from '../quantdb/utils';
+import { SourceDatasetCatalog } from './SourceDatasetCatalog';
 
 export function DatayesConfigPanel() {
     const [config, setConfig] = useState<DatayesConfig | null>(null);
@@ -89,6 +90,7 @@ export function DatayesConfigPanel() {
             <Typography.Text type="secondary" className="text-xs">
                 Token 保存在服务端，重启后仍保留，页面仅显示掩码。保存后到管理后台 → 数据平台 → A 股，勾选 Datayes 并初始化数据。实际数据权限以数据商城订阅为准。
             </Typography.Text>
+            {config?.datasets && <SourceDatasetCatalog datasets={config.datasets} />}
         </Space>
     );
 }

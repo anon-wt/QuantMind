@@ -16,19 +16,19 @@ from collections.abc import Callable
 import pandas as pd
 import requests
 
-from backend.shared.quantdb_datasets import DATASETS, get_dataset_spec
+from .datayes_catalog import (
+    LOCAL_DATASETS as DATASETS,
+    get_local_spec as get_dataset_spec,
+    CATALOG,
+    BY_DATASET,
+)
 from backend.shared.runtime_secrets import get_secret
 from backend.shared.stock_utils import StockCodeUtil
 
 API_ROOT = "https://api.datayes.com/data/v1/api"
 # method/category/mode; day=全市场单日，batch=50 个证券的日期窗口。
 ENDPOINTS = {
-    "daily_unadjusted": ("market/getMktEqud", "day"),
     "daily_forward": ("market/getMktEqudAdj", "day"),
-    "daily_backward": ("market/getMktEqudAdjAf", "day"),
-    "index_daily": ("market/getMktIdxd", "index"),
-    "instrument_detail": ("equity/getEqu", "stocks"),
-    "trading_calendar": ("master/getTradeCal", "calendar"),
     "sector_concept": ("master/getSecTypeRel", "sectors"),
     "index_weights": ("idx/getIdxCloseWeight", "weights"),
     "margin_trading": ("equity/getFstDetail", "batch"),
@@ -44,6 +44,7 @@ ENDPOINTS = {
     "etf_pcf": ("fund/getFundETFPRList", "etf"),
     "convertible_bond": ("market/getMktConsBondPerf", "bonds"),
 }
+ENDPOINTS.update({row.dataset: (row.endpoint, row.mode) for row in CATALOG})
 DERIVED = {"technical_indicators", "features_daily"}
 SUPPORTED = set(ENDPOINTS) | DERIVED
 UNSUPPORTED_REASON = "暂无可直接对齐的商城接口或数据定义，使用 QuantDB 同步此数据集"
@@ -77,6 +78,10 @@ class DatayesClient:
         self._session.close()
 
     def fetch(self, endpoint: str, **params) -> pd.DataFrame:
+        # The SQL adapter consumes these bounds for interval overlap; the vendor
+        # endpoints for complete membership/industry history have no such args.
+        params.pop("_window_start", None)
+        params.pop("_window_end", None)
         for attempt in range(3):
             if self._cancel():
                 raise SyncCancelled()
@@ -126,16 +131,41 @@ def normalize(frame: pd.DataFrame, dataset: str) -> pd.DataFrame:
     if frame.empty:
         return frame
     frame = frame.copy()
+    if dataset == "index_constituents":
+        # secID denotes the index here, not the constituent equity.
+        if (
+            "secID" in frame
+            and not frame["secID"]
+            .astype(str)
+            .isin(["000852.ZICN", "000852.XSHG", "000852.SH"])
+            .all()
+        ):
+            raise ValueError("中证1000成分接口返回了其他指数的数据")
+        frame["index_sec_id"] = frame.get("secID")
+        frame["index_symbol"] = StockCodeUtil.normalize("000852.SH")
+        if "consID" in frame:
+            frame["secID"] = frame["consID"]
+            frame["exchangeCD"] = frame.get("consExchangeCD", "")
     if dataset != "trading_calendar":
 
         def symbol(row):
             return StockCodeUtil.from_datayes(
                 row.get("secID") or row.get("indexID") or row.get("ticker", ""),
                 row.get("exchangeCD", ""),
-            ) or StockCodeUtil.from_datayes(row.get("ticker", ""), row.get("exchangeCD", ""))
+            ) or StockCodeUtil.from_datayes(
+                row.get("ticker", ""), row.get("exchangeCD", "")
+            )
 
-        frame["symbol"] = frame.apply(symbol, axis=1)
-        if (frame["symbol"] == "").any():
+        frame["symbol"] = (
+            frame["symbol"].map(
+                lambda value: (
+                    StockCodeUtil.from_datayes(value) or StockCodeUtil.normalize(value)
+                )
+            )
+            if "symbol" in frame
+            else frame.apply(symbol, axis=1)
+        )
+        if not frame["symbol"].astype(str).str.fullmatch(r"\d{6}\.(SH|SZ|BJ)").all():
             raise ValueError("Datayes 返回无法识别的证券/交易所编码")
     aliases = {
         "openPrice": "open",
@@ -207,6 +237,62 @@ def normalize(frame: pd.DataFrame, dataset: str) -> pd.DataFrame:
     )
     if date_col:
         frame["time"] = pd.to_datetime(frame[date_col], errors="coerce").dt.normalize()
+    native = BY_DATASET.get(dataset)
+    if native and native.date_column:
+        if native.date_column not in frame:
+            raise ValueError(f"{dataset} 缺少日期字段 {native.date_column}")
+        business_date = pd.to_datetime(
+            frame[native.date_column].astype(str), format="mixed", errors="coerce"
+        )
+        if business_date.dt.tz is not None:
+            business_date = business_date.dt.tz_convert("Asia/Shanghai").dt.tz_localize(
+                None
+            )
+        frame["time"] = business_date.dt.normalize()
+        if frame["time"].isna().any():
+            raise ValueError(f"{dataset} 包含无法解析的业务日期")
+    if dataset in {"stock_factors_pro", "cne6_exposure"}:
+        frame["date"] = frame["time"].dt.strftime("%Y-%m-%d")
+    if dataset in {"index_constituents", "sw_l1_industry"}:
+        frame["effective_from"] = frame["time"]
+        frame["effective_to"] = pd.to_datetime(
+            frame.get("outDate", pd.Series(pd.NaT, index=frame.index)), errors="coerce"
+        )
+    if dataset == "sw_l1_industry":
+        frame["industry_code"] = frame["industryID1"]
+        frame["industry_name"] = frame["industryName1"]
+        frame["industry_version"] = frame["industryVersionCD"]
+    if dataset == "stock_halts":
+        for original, target in (
+            ("haltBeginTime", "halt_begin"),
+            ("haltEndTime", "halt_end"),
+        ):
+            parsed = pd.to_datetime(
+                frame.get(original, pd.Series(pd.NaT, index=frame.index)),
+                errors="coerce",
+            )
+            frame[target] = (
+                parsed.dt.tz_localize("Asia/Shanghai")
+                if parsed.dt.tz is None
+                else parsed
+            ).dt.tz_convert("UTC")
+    if dataset == "stock_st":
+        frame["st_flag"] = frame["STflg"]
+        frame["is_st"] = (
+            frame["STflg"].astype(str).str.upper().str.contains("ST", regex=False)
+        )
+    if dataset == "equity_dividends":
+        if "endDate" not in frame:
+            raise ValueError("分红送转缺少报告期 endDate / m_timetag")
+        frame["endDate"] = pd.to_datetime(
+            frame["endDate"].astype(str), format="mixed", errors="coerce"
+        ).dt.strftime("%Y-%m-%d")
+        if frame["endDate"].isna().any():
+            raise ValueError("分红送转报告期无法解析")
+        frame["publication_date"] = frame["time"]
+        frame["cash_dividend_per_share"] = frame.get("perCashDiv")
+        frame["bonus_share_ratio"] = frame.get("perShareDivRatio")
+        frame["transfer_share_ratio"] = frame.get("perShareTransRatio")
     if dataset == "dividend_factors" and "exDivDate" in frame:
         frame["m_timetag"] = frame["exDivDate"]
         frame["time"] = pd.to_datetime(
@@ -229,7 +315,11 @@ def write_frame(root: Path, dataset: str, frame: pd.DataFrame) -> int:
             for dt, part in frame.groupby(frame["time"].dt.strftime("%Y%m%d"))
         ]
     elif spec.layout == "symbol":
-        key = "index_symbol" if dataset == "index_weights" else "symbol"
+        key = (
+            "index_symbol"
+            if dataset in {"index_weights", "index_constituents"}
+            else "symbol"
+        )
         pieces = [
             (directory / f"{symbol}.parquet", part)
             for symbol, part in frame.groupby(key)
@@ -265,6 +355,15 @@ def write_frame(root: Path, dataset: str, frame: pd.DataFrame) -> int:
         ]
         if dataset == "instrument_detail":
             identity = ["symbol"]
+        identity = {
+            "index_constituents": ["index_symbol", "symbol", "time"],
+            "sw_l1_industry": ["symbol", "time", "industry_version"],
+            "stock_halts": ["symbol", "halt_begin"],
+            "stock_st": ["symbol", "time"],
+            "equity_dividends": ["symbol", "endDate"],
+        }.get(dataset, identity)
+        if dataset == "equity_dividends":
+            part = part.sort_values("time", kind="stable")
         part = part.drop_duplicates(subset=identity or None, keep="last")
         temporary = path.with_name(f".{path.name}.{threading.get_ident()}.tmp")
         try:
@@ -282,7 +381,28 @@ def _windows(start: date, end: date, days: int = 90):
         start = stop + timedelta(days=1)
 
 
-def _derived(root: Path, dataset: str, start: date, end: date, cancelled, source_name="datayes"):
+def filter_native_window(frame, dataset, start, end):
+    """Interval datasets include records starting before the requested window."""
+    if frame.empty or dataset not in BY_DATASET or dataset == "instrument_detail":
+        return frame
+    native = BY_DATASET[dataset]
+    keep = frame["time"] <= pd.Timestamp(end)
+    if native.interval_end:
+        until = pd.to_datetime(
+            frame.get(native.interval_end, pd.Series(pd.NaT, index=frame.index)),
+            errors="coerce",
+        )
+        if until.dt.tz is not None:
+            until = until.dt.tz_convert("Asia/Shanghai").dt.tz_localize(None)
+        keep &= until.isna() | (until >= pd.Timestamp(start))
+    else:
+        keep &= frame["time"] >= pd.Timestamp(start)
+    return frame.loc[keep].copy()
+
+
+def _derived(
+    root: Path, dataset: str, start: date, end: date, cancelled, source_name="datayes"
+):
     from .quantdb_hub import QuantDBDataHub
 
     if (end - start).days > 365:
@@ -476,10 +596,16 @@ def sync_datayes(
     order = [
         s.dataset
         for s in DATASETS
-        if s.dataset in selected and s.dataset not in DERIVED and s.dataset not in local_datasets
+        if s.dataset in selected
+        and s.dataset not in DERIVED
+        and s.dataset not in local_datasets
     ]
     order += [
-        s.dataset for s in DATASETS if s.dataset in selected and s.dataset in DERIVED and s.dataset not in local_datasets
+        s.dataset
+        for s in DATASETS
+        if s.dataset in selected
+        and s.dataset in DERIVED
+        and s.dataset not in local_datasets
     ]
     own_client = client is None
     client = client or DatayesClient(should_cancel)
@@ -538,7 +664,9 @@ def sync_datayes(
                         message=f"{source_name}：{get_dataset_spec(dataset).name}",
                     )
                 if dataset in DERIVED:
-                    rows = _derived(root, dataset, start, end, should_cancel, source_name)
+                    rows = _derived(
+                        root, dataset, start, end, should_cancel, source_name
+                    )
                 else:
                     endpoint, mode = ENDPOINTS[dataset]
                     if mode == "stocks":
@@ -560,6 +688,46 @@ def sync_datayes(
                     elif mode == "sectors":
                         requests_to_make = [
                             {"secID": ",".join(batch)} for batch in batches
+                        ]
+                    elif mode == "constituents":
+                        requests_to_make = [
+                            {
+                                "ticker": "000852",
+                                "_window_start": start.strftime("%Y%m%d"),
+                                "_window_end": end.strftime("%Y%m%d"),
+                            }
+                        ]
+                        if not getattr(client, "supports_interval_history", False):
+                            # No date defaults to current members in Datayes; query
+                            # every trading date so transient historical members survive.
+                            requests_to_make = [
+                                {
+                                    **requests_to_make[0],
+                                    "intoDate": day.strftime("%Y%m%d"),
+                                }
+                                for day in trading_days
+                                if day >= start
+                            ]
+                    elif mode == "industry_history":
+                        requests_to_make = [
+                            {
+                                "secID": ",".join(batch),
+                                "industryVersionCD": "010321",
+                                "_window_start": start.strftime("%Y%m%d"),
+                                "_window_end": end.strftime("%Y%m%d"),
+                            }
+                            for batch in batches
+                        ]
+                    elif mode == "halt_history":
+                        requests_to_make = [
+                            {
+                                "secID": ",".join(batch),
+                                "beginDate": "19900101",
+                                "endDate": end.strftime("%Y%m%d"),
+                                "_window_start": start.strftime("%Y%m%d"),
+                                "_window_end": end.strftime("%Y%m%d"),
+                            }
+                            for batch in batches
                         ]
                     elif mode == "weights":
                         requests_to_make = [
@@ -612,6 +780,7 @@ def sync_datayes(
                                         "beginPublishDate",
                                         "endPublishDate",
                                     ),
+                                    "dividends": ("beginNewPubDate", "endNewPubDate"),
                                 }.get(mode, ("beginDate", "endDate"))
                                 params.update(zip(keys, (begin, stop), strict=True))
                                 requests_to_make.append(params)
@@ -627,6 +796,7 @@ def sync_datayes(
                                 else client.fetch(endpoint, **params)
                             )
                             frame = normalize_source(raw, dataset)
+                        frame = filter_native_window(frame, dataset, start, end)
                         if not frame.empty and dataset in {
                             "daily_forward",
                             "daily_backward",

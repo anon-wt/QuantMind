@@ -256,7 +256,12 @@ def test_datayes_selected_scope_excludes_quantdb_proprietary_factors(api):
     data = client.get("/initialization").json()["data"]
     enabled = {p["source"] for p in data["providers"] if p["enabled"]}
     visible = [d for d in data["datasets"] if enabled.intersection(d["sources"])]
-    assert len(visible) == 22
+    assert len(visible) == 29
+    native = [d for d in visible if d["datayes_endpoint"]]
+    assert len(native) == 12
+    assert {d["data_type"] for d in native} == {
+        "market", "factor", "risk", "reference", "status", "corporate"
+    }
     assert not any(d["dataset"] == "l1_factors" for d in visible)
 
 
