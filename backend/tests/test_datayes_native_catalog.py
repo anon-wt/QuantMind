@@ -185,6 +185,29 @@ def test_csi_index_variants_keep_full_codes_and_explicit_exchange(tmp_path):
         sync.normalize(vendor, "index_daily")
 
 
+def test_stock_master_skips_vendor_alias_without_replacing_listed_stock(tmp_path):
+    class StockAliasClient(NativeClient):
+        def fetch(self, endpoint, **params):
+            rows = super().fetch(endpoint, **params)
+            if endpoint == "equity/getEqu":
+                alias = rows.assign(
+                    secID="DY600000.XSHG", ticker="DY600000", listStatusCD="DE"
+                )
+                rows = pd.concat([rows, alias], ignore_index=True)
+            return rows
+
+    result = sync.sync_datayes(
+        ["instrument_detail"],
+        date(2024, 1, 2),
+        date(2024, 1, 2),
+        client=StockAliasClient(),
+        root=tmp_path,
+    )
+    assert result["errors"] == 0 and result["skipped_stock_rows"] == 1
+    path = tmp_path / "2_base_sector/instrument_detail/instrument_list.parquet"
+    assert pd.read_parquet(path)["secID"].tolist() == ["600000.XSHG"]
+
+
 def test_all_twelve_roundtrip_and_event_dates_are_not_future_exdates(tmp_path):
     client = NativeClient()
     result = sync.sync_datayes(

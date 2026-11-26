@@ -171,10 +171,15 @@ def normalize(frame: pd.DataFrame, dataset: str) -> pd.DataFrame:
             else frame.apply(symbol, axis=1)
         )
         code_pattern = r"[A-Z0-9]{1,32}" if index_variant else r"\d{6}"
-        if not frame["symbol"].astype(str).str.fullmatch(
+        valid_symbols = frame["symbol"].astype(str).str.fullmatch(
             fr"{code_pattern}\.(SH|SZ|BJ)"
-        ).all():
-            raise ValueError("Datayes 返回无法识别的证券/交易所编码")
+        )
+        if not valid_symbols.all():
+            if dataset != "instrument_detail":
+                raise ValueError("Datayes 返回无法识别的证券/交易所编码")
+            # Delisted provider aliases may coexist with a different listed stock
+            # using the numeric ticker. Keep only canonical entries in the universe.
+            frame = frame.loc[valid_symbols].copy()
     aliases = {
         "openPrice": "open",
         "highestPrice": "high",
@@ -628,8 +633,8 @@ def sync_datayes(
     try:
         if should_cancel():
             raise SyncCancelled()
-        stocks = client.fetch("equity/getEqu", equTypeCD="A", listStatusCD="L,S,DE")
-        stocks = normalize_source(stocks, "instrument_detail")
+        raw_stocks = client.fetch("equity/getEqu", equTypeCD="A", listStatusCD="L,S,DE")
+        stocks = normalize_source(raw_stocks, "instrument_detail")
         if stocks.empty:
             raise ValueError("Datayes 股票列表为空，无法初始化")
         if "instrument_detail" not in local_datasets:
@@ -858,6 +863,7 @@ def sync_datayes(
             "datasets": results,
             "cancelled": False,
             "errors": sum(r["status"] == "failed" for r in results),
+            "skipped_stock_rows": len(raw_stocks) - len(stocks),
         }
     except SyncCancelled:
         return {"root": str(root), "datasets": results, "cancelled": True, "errors": 0}
