@@ -345,6 +345,14 @@ def write_frame(root: Path, dataset: str, frame: pd.DataFrame) -> int:
         pieces = [(directory / f"{filename}.parquet", frame)]
     for path, part in pieces:
         path.parent.mkdir(parents=True, exist_ok=True)
+        if dataset == "instrument_detail" and "listStatusCD" in part:
+            # Keep the listed identity within this snapshot. A later snapshot
+            # that only supplies a delisted row must still update it.
+            part = part.sort_values(
+                "listStatusCD",
+                key=lambda status: status.map({"S": 1, "L": 2}).fillna(0),
+                kind="stable",
+            )
         if path.exists():
             part = pd.concat([pd.read_parquet(path), part], ignore_index=True)
         identity = [

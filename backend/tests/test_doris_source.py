@@ -1,6 +1,7 @@
 """Doris -> Parquet：字段契约、只读 SQL、增量修订、取消、进度与目录切换。"""
 
 import json
+from collections import OrderedDict
 from datetime import date
 
 import pandas as pd
@@ -321,6 +322,119 @@ def test_custom_prices_are_used_by_automatic_derived_features(config, tmp_path):
         root / "6_ml_datasets/features_daily/dt=20240102/data.parquet"
     )
     assert frame["close"].tolist() == [77]
+
+
+def test_doris_stock_master_supplements_universe_and_keeps_listed_record(
+    config, tmp_path, monkeypatch
+):
+    config.mappings = {
+        "getEqu": ds.TableMapping(table="market.ods_datayes_getequ"),
+        "getTradeCal": ds.TableMapping(table="calendar"),
+        "getMktEqud": ds.TableMapping(table="bars"),
+    }
+    client = object.__new__(ds.DorisClient)
+    client.config = config
+    client._cache = OrderedDict()
+    client.should_cancel = lambda: False
+    client.skipped_stock_rows = 0
+    day = date(2026, 11, 25)
+    listed = {
+        "secID": "000043.XSHE",
+        "ticker": "000043",
+        "exchangeCD": "XSHE",
+        "listDate": "1994-09-28",
+        "listStatusCD": "L",
+        "secShortName": "招商积余",
+        "dt": day,
+    }
+    old = {
+        **listed,
+        "secID": "000043.XSHE2",
+        "listStatusCD": "DE",
+        "secShortName": "中航善达",
+    }
+    beijing = {
+        **listed,
+        "secID": "920001.XBEI",
+        "ticker": "920001",
+        "exchangeCD": "XBEI",
+        "secShortName": "北交所股票",
+        "listDate": "2023-01-02",
+        "assetClass": "E",
+    }
+    equities = pd.DataFrame([listed, old]).assign(equTypeCD="A")
+    master = pd.DataFrame([beijing])
+    calendar = pd.DataFrame(
+        [{"calendarDate": day.isoformat(), "exchangeCD": "XSHE", "isOpen": 1}]
+    )
+    bars = pd.DataFrame(
+        [
+            {
+                **stock,
+                "tradeDate": day.isoformat(),
+                "openPrice": 10,
+                "highestPrice": 12,
+                "lowestPrice": 9,
+                "closePrice": 11,
+                "turnoverVol": 200,
+                "turnoverValue": 2200,
+            }
+            for stock in (listed, beijing)
+        ]
+    )
+    tables = {
+        "market.ods_datayes_getequ": equities,
+        "market.ods_datayes_getsecid": master,
+        "calendar": calendar,
+        "bars": bars,
+    }
+    monkeypatch.setattr(
+        client,
+        "schema",
+        lambda mapping: dict.fromkeys(tables[mapping.table].columns, "varchar"),
+    )
+    calls = []
+
+    def query(sql, params=()):
+        calls.append((sql, params))
+        if sql == "SHOW TABLES FROM `market` LIKE %s":
+            assert params == ("ods_datayes_getsecid",)
+            return pd.DataFrame({"name": ["ods_datayes_getsecid"]})
+        for name, frame in tables.items():
+            if sql.startswith(
+                f"SELECT * FROM {client._table_sql(ds.TableMapping(table=name))} "
+            ):
+                return frame.copy()
+        pytest.fail(sql)
+
+    monkeypatch.setattr(client, "_query", query)
+    result = ds.sync_doris(["daily_unadjusted"], day, day, client=client, root=tmp_path)
+    assert result["errors"] == 0, result
+    assert (
+        "SELECT * FROM `market`.`ods_datayes_getsecid` WHERE "
+        "`dt` = (SELECT MAX(`dt`) FROM `market`.`ods_datayes_getsecid`) "
+        "AND `exchangeCD` IN (%s) AND `assetClass` IN (%s) AND `listStatusCD` IN (%s,%s,%s)",
+        ("XBEI", "E", "L", "S", "DE"),
+    ) in calls
+    details_path = tmp_path / "2_base_sector/instrument_detail/instrument_list.parquet"
+    details = pd.read_parquet(details_path).set_index("symbol")
+    assert details.index.is_unique
+    assert details.loc["000043.SZ", "Name"] == "招商积余"
+    assert not details.loc["000043.SZ", "IsQuitGP"]
+    assert details.loc["920001.BJ", ["J_start", "equTypeCD"]].tolist() == [
+        "20230102",
+        "J",
+    ]
+    saved_bars = pd.read_parquet(
+        tmp_path / "1_kline_data/daily_unadjusted/dt=20261125/data.parquet"
+    )
+    assert set(saved_bars["symbol"]) == {"000043.SZ", "920001.BJ"}
+
+    retirement = ds.datayes_sync.normalize(pd.DataFrame([old]), "instrument_detail")
+    ds.datayes_sync.write_frame(tmp_path, "instrument_detail", retirement)
+    details = pd.read_parquet(details_path).set_index("symbol")
+    assert details.loc["000043.SZ", "IsQuitGP"]
+    assert "920001.BJ" in details.index
 
 
 def test_source_selection_is_shared_by_hub_factor_reader_and_builder(

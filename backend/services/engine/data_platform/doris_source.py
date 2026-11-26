@@ -42,6 +42,7 @@ ENDPOINTS = {
     endpoint.rsplit("/", 1)[-1] for endpoint, _ in datayes_sync.ENDPOINTS.values()
 } | {
     "getEquIndustry",
+    "getSecID",
     "getFundETFCons",
     "getBondConv",
     "getBondConvPriceChg",
@@ -73,6 +74,7 @@ _DATE_COLUMNS = {
 }
 _SNAPSHOTS = {
     "getEqu",
+    "getSecID",
     "getSecTypeRel",
     "getEquIndustry",
     "getBondConv",
@@ -460,9 +462,47 @@ class DorisClient:
             "factor_candidates": factor_candidates,
         }
 
+    def _security_master_mapping(self) -> TableMapping | None:
+        equity = self.config.mappings.get("getEqu")
+        if equity is None:
+            return None
+        database, separator, table = equity.table.rpartition(".")
+        suffix = "getequ"
+        prefixes = {self.config.table_prefix.lower(), "ods_datayes_", "hunter_ods_datayes_"}
+        if table.lower() not in {prefix + suffix for prefix in prefixes}:
+            return None
+        candidate = table[:-len(suffix)] + "getsecid"
+        scope = f" FROM `{identifier(database)}`" if database else ""
+        found = self._query(f"SHOW TABLES{scope} LIKE %s", (candidate,))
+        if not found.empty:
+            for name in found.iloc[:, 0]:
+                if name.casefold() == candidate.casefold():
+                    return TableMapping(table=f"{database}{separator}{name}")
+        return None
+
+    def _beijing_stock_details(self, params: dict) -> pd.DataFrame:
+        exchanges = params.get("exchangeCD")
+        if "A" not in str(params.get("equTypeCD", "")).split(",") or (
+            exchanges and "XBEI" not in str(exchanges).split(",")
+        ):
+            return pd.DataFrame()
+        filters = {
+            key: params[key] for key in ("secID", "ticker", "listStatusCD") if params.get(key)
+        }
+        master = self.fetch("master/getSecID", assetClass="E", exchangeCD="XBEI", **filters)
+        if master.empty:
+            return master
+        if not {"secID", "ticker", "secShortName", "listDate"} <= set(master):
+            raise ValueError("Doris 证券主表缺少北交所证券代码、名称或上市日期字段")
+        return master.assign(equTypeCD="J")
+
     def fetch(self, endpoint, **params) -> pd.DataFrame:
         name = endpoint.rsplit("/", 1)[-1]
         mapping = self.config.mappings.get(name)
+        if mapping is None and name == "getSecID":
+            mapping = self._security_master_mapping()
+            if mapping is None:
+                return pd.DataFrame()
         if mapping is None and name == "getMktIdxdCsi":
             mapping = self.config.mappings.get("getMktIdxd")
         if mapping is None:
@@ -478,6 +518,7 @@ class DorisClient:
             "secID",
             "ticker",
             "exchangeCD",
+            "assetClass",
             "equTypeCD",
             "listStatusCD",
             "industryVersionCD",
@@ -571,6 +612,10 @@ class DorisClient:
         result = result.drop(columns=["_qm_rank"], errors="ignore")
         if "dt" in result:
             result = result.sort_values("dt", kind="stable")
+        if name == "getEqu":
+            beijing = self._beijing_stock_details(params)
+            if not beijing.empty:
+                result = pd.concat([result, beijing], ignore_index=True)
         if name == "getEqu" and not result.empty:
             valid = result.apply(
                 lambda row: bool(
