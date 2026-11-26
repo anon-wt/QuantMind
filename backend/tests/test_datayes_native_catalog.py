@@ -161,6 +161,30 @@ def test_twelve_classified_native_datasets_do_not_expand_quantdb_cloud():
     )
 
 
+def test_csi_index_variants_keep_full_codes_and_explicit_exchange(tmp_path):
+    vendor = pd.DataFrame(
+        [
+            {"secID": code, "exchangeCD": "XSHG", "tradeDate": "2025-03-03"}
+            for code in ("000852.ZICN", "H10001.XSHG", "000012CNY030.XSHG")
+        ]
+    )
+    expected = {"000852.SH", "H10001.SH", "000012CNY030.SH"}
+    rows = sync.normalize(vendor, "index_daily")
+    sync.write_frame(tmp_path, "index_daily", rows)
+    stored = pd.read_parquet(
+        tmp_path / "1_kline_data/index_daily/dt=20250303/data.parquet"
+    )
+    assert set(stored["symbol"]) == expected
+    mapped = rows.assign(
+        symbol=vendor["secID"], open=1, high=1, low=1, close=1, volume=1, amount=1
+    )
+    mapped.loc[0, "symbol"] = "000852.XSHG"
+    assert set(ds.normalize_standard(mapped, "index_daily")["symbol"]) == expected
+    vendor.loc[0, "exchangeCD"] = ""
+    with pytest.raises(ValueError, match="交易所编码"):
+        sync.normalize(vendor, "index_daily")
+
+
 def test_all_twelve_roundtrip_and_event_dates_are_not_future_exdates(tmp_path):
     client = NativeClient()
     result = sync.sync_datayes(

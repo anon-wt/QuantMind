@@ -147,25 +147,33 @@ def normalize(frame: pd.DataFrame, dataset: str) -> pd.DataFrame:
             frame["secID"] = frame["consID"]
             frame["exchangeCD"] = frame.get("consExchangeCD", "")
     if dataset != "trading_calendar":
+        index_variant = dataset == "index_daily"
 
         def symbol(row):
             return StockCodeUtil.from_datayes(
                 row.get("secID") or row.get("indexID") or row.get("ticker", ""),
                 row.get("exchangeCD", ""),
+                index_variant=index_variant,
             ) or StockCodeUtil.from_datayes(
-                row.get("ticker", ""), row.get("exchangeCD", "")
+                row.get("ticker", ""),
+                row.get("exchangeCD", ""),
+                index_variant=index_variant,
             )
 
         frame["symbol"] = (
             frame["symbol"].map(
                 lambda value: (
-                    StockCodeUtil.from_datayes(value) or StockCodeUtil.normalize(value)
+                    StockCodeUtil.from_datayes(value, index_variant=index_variant)
+                    or StockCodeUtil.normalize(value)
                 )
             )
             if "symbol" in frame
             else frame.apply(symbol, axis=1)
         )
-        if not frame["symbol"].astype(str).str.fullmatch(r"\d{6}\.(SH|SZ|BJ)").all():
+        code_pattern = r"[A-Z0-9]{1,32}" if index_variant else r"\d{6}"
+        if not frame["symbol"].astype(str).str.fullmatch(
+            fr"{code_pattern}\.(SH|SZ|BJ)"
+        ).all():
             raise ValueError("Datayes 返回无法识别的证券/交易所编码")
     aliases = {
         "openPrice": "open",

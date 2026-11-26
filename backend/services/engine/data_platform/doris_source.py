@@ -694,12 +694,17 @@ def normalize_standard(frame: pd.DataFrame, dataset: str) -> pd.DataFrame:
         result["data_source"] = "doris"
         return result
     if "symbol" in frame:
+        index_variant = dataset == "index_daily"
         frame["symbol"] = frame["symbol"].map(
             lambda value: (
-                StockCodeUtil.from_datayes(value) or StockCodeUtil.normalize(value)
+                StockCodeUtil.from_datayes(value, index_variant=index_variant)
+                or StockCodeUtil.normalize(value)
             )
         )
-        if not frame["symbol"].astype(str).str.fullmatch(r"\d{6}\.(SH|SZ|BJ)").all():
+        code_pattern = r"[A-Z0-9]{1,32}" if index_variant else r"\d{6}"
+        if not frame["symbol"].astype(str).str.fullmatch(
+            fr"{code_pattern}\.(SH|SZ|BJ)"
+        ).all():
             raise ValueError("股票代码无法转换为 A 股标准后缀格式，请检查字段映射")
     elif dataset not in {"trading_calendar", "market_sentiment"}:
         raise ValueError("请将 Doris 股票代码字段映射到 symbol")

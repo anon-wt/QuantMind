@@ -23,22 +23,29 @@ class StockCodeUtil:
         return StockCodeUtil.to_suffix(code)
 
     @staticmethod
-    def from_datayes(code: str, exchange: str = "") -> str:
+    def from_datayes(
+        code: str, exchange: str = "", *, index_variant: bool = False
+    ) -> str:
         """通联证券编码/交易所代码在数据源边界转换为统一后缀。"""
         value = str(code or "").strip().upper()
-        match = re.fullmatch(r"(\d{1,6})(?:\.([A-Z]+))?", value)
+        code_pattern = r"[A-Z0-9]{1,32}" if index_variant else r"\d{1,6}"
+        match = re.fullmatch(fr"({code_pattern})(?:\.([A-Z]+))?", value)
         if not match:
             return ""
-        digits, suffix = match.groups()
+        ticker, suffix = match.groups()
         market = {
             "XSHG": "SH", "XSHE": "SZ", "XBEI": "BJ",
             "SH": "SH", "SZ": "SZ", "BJ": "BJ",
         }.get(str(exchange or suffix or "").upper())
+        if ticker.isdigit() and len(ticker) <= 6:
+            ticker = ticker.zfill(6)
         if market:
-            return StockCodeUtil.normalize(f"{digits.zfill(6)}.{market}")
+            return StockCodeUtil.normalize(f"{ticker}.{market}")
+        if index_variant:
+            return ""
         if suffix:
             return ""  # 发行机构编码（如 ZICN）不等价于交易所，禁止猜测。
-        return StockCodeUtil.normalize(digits.zfill(6))
+        return StockCodeUtil.normalize(ticker)
 
     @staticmethod
     def to_suffix(code: str) -> str:
